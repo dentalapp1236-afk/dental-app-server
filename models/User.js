@@ -7,16 +7,49 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     phone: { type: String, trim: true, unique: true, sparse: true },
     password: { type: String, required: true, minlength: 8 },
-    role: { type: String, enum: ["dentist", "client"], required: true },
+    role: { type: String, enum: ["dentist", "client", "vendor"], required: true },
     // Client-only fields
     dateOfBirth: { type: Date },
     address: { type: String },
     medicalNotes: { type: String },
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+
+    // Dentist-only profile fields
+    clinicName: { type: String, trim: true },
+    about: { type: String, trim: true },
+    specialization: { type: String, trim: true },
+    yearsOfExperience: { type: Number, min: 0 },
+    // GeoJSON point for "nearest dentist" discovery: coordinates = [longitude, latitude]
+    location: {
+      type: { type: String, enum: ["Point"], default: undefined },
+      coordinates: { type: [Number], default: undefined },
+    },
+    // Weekly availability, e.g. [{ day: "Monday", start: "09:00", end: "17:00" }]
+    availability: [
+      {
+        _id: false,
+        day: { type: String },
+        start: { type: String },
+        end: { type: String },
+      },
+    ],
+    // Denormalized rating, recomputed from Reviews
+    rating: { type: Number, default: 0 },
+    reviewCount: { type: Number, default: 0 },
+
+    // Vendor-only profile field
+    companyName: { type: String, trim: true },
+
+    // Password reset (hashed token + expiry)
+    resetTokenHash: { type: String },
+    resetTokenExpires: { type: Date },
   },
   { timestamps: true }
 );
+
+// Geospatial index powers $near queries for nearest-dentist discovery
+userSchema.index({ location: "2dsphere" });
 
 // Avoid storing empty-string phones, which would violate the sparse unique index
 userSchema.pre("save", function (next) {
@@ -38,6 +71,8 @@ userSchema.methods.comparePassword = function (candidate) {
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
+  delete obj.resetTokenHash;
+  delete obj.resetTokenExpires;
   return obj;
 };
 

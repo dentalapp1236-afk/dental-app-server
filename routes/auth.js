@@ -1,7 +1,9 @@
 import express from "express";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { protect } from "../middleware/auth.js";
+import { sendMail } from "../utils/mailer.js";
 
 const router = express.Router();
 
@@ -13,12 +15,28 @@ const signToken = (user) =>
 // POST /api/auth/register
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, role, phone, dateOfBirth, address } = req.body;
+    const {
+      name,
+      email,
+      password,
+      role,
+      phone,
+      dateOfBirth,
+      address,
+      // Dentist profile fields
+      clinicName,
+      about,
+      specialization,
+      yearsOfExperience,
+      availability,
+      latitude,
+      longitude,
+    } = req.body;
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "name, email, password, role are required" });
     }
-    if (!["dentist", "client"].includes(role)) {
-      return res.status(400).json({ message: "role must be dentist or client" });
+    if (!["dentist", "client", "vendor"].includes(role)) {
+      return res.status(400).json({ message: "role must be dentist, client, or vendor" });
     }
     if (password.length < 8) {
       return res.status(400).json({ message: "Password must be at least 8 characters" });
@@ -32,6 +50,24 @@ router.post("/register", async (req, res) => {
       if (phoneExists) return res.status(409).json({ message: "Phone already registered" });
     }
 
+    // Build dentist-only profile data (incl. GeoJSON location from lat/lng) when registering as a dentist
+    const dentistFields = {};
+    if (role === "dentist") {
+      if (clinicName) dentistFields.clinicName = clinicName;
+      if (about) dentistFields.about = about;
+      if (specialization) dentistFields.specialization = specialization;
+      if (yearsOfExperience != null && yearsOfExperience !== "") {
+        dentistFields.yearsOfExperience = Number(yearsOfExperience);
+      }
+      if (Array.isArray(availability)) dentistFields.availability = availability;
+      if (latitude != null && longitude != null && latitude !== "" && longitude !== "") {
+        dentistFields.location = {
+          type: "Point",
+          coordinates: [Number(longitude), Number(latitude)],
+        };
+      }
+    }
+
     const user = await User.create({
       name,
       email,
@@ -40,6 +76,7 @@ router.post("/register", async (req, res) => {
       phone: trimmedPhone || undefined,
       dateOfBirth,
       address,
+      ...dentistFields,
     });
     const token = signToken(user);
     res.status(201).json({ token, user });
@@ -70,6 +107,75 @@ router.post("/login", async (req, res) => {
 
     const token = signToken(user);
     res.json({ token, user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/auth/forgot-password  -> email a time-limited reset link
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    // If the user exists, generate a token, store its hash, and email the link.
+    if (user) {
+      const token = crypto.randomBytes(32).toString("hex");
+      user.resetTokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      user.resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      await user.save();
+
+      const base = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+      const link = `${base}/reset-password?token=${token}`;
+      await sendMail({
+        to: user.email,
+        subject: "Reset your MyDentalBooking password",
+        text: `We received a request to reset your password.\n\nUse this link within 1 hour:\n${link}\n\nIf you didn't request this, you can ignore this email.`,
+        html: `<p>We received a request to reset your password.</p>
+               <p>Use this link within 1 hour:</p>
+               <p><a href="${link}">${link}</a></p>
+               <p>If you didn't request this, you can ignore this email.</p>`,
+      });
+    }
+
+    // Always return a generic response so we don't reveal which emails exist
+    res.json({
+      message: "If that email is registered, a reset link has been sent.",
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/auth/reset-password  -> set a new password using a valid token
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) {
+      return res.status(400).json({ message: "Token and new password are required" });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters" });
+    }
+
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const user = await User.findOne({
+      resetTokenHash: hash,
+      resetTokenExpires: { $gt: new Date() },
+    });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired reset link" });
+    }
+
+    user.password = password; // re-hashed by the pre-save hook
+    user.resetTokenHash = undefined;
+    user.resetTokenExpires = undefined;
+    await user.save();
+
+    res.json({ message: "Password updated. You can now sign in." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
