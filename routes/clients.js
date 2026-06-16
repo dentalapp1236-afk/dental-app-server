@@ -1,5 +1,7 @@
 import express from "express";
 import User from "../models/User.js";
+import Association from "../models/Association.js";
+import { sendMail } from "../utils/mailer.js";
 import { protect, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -7,10 +9,10 @@ const router = express.Router();
 // All routes here require an authenticated dentist
 router.use(protect, requireRole("dentist"));
 
-// GET /api/clients  -> list clients linked to this dentist (or all clients if not linked yet)
+// GET /api/clients  -> list clients associated with THIS dentist
 router.get("/", async (req, res) => {
   const { search } = req.query;
-  const filter = { role: "client" };
+  const filter = { role: "client", dentist: req.user._id };
   if (search) {
     filter.$or = [
       { name: new RegExp(search, "i") },
@@ -49,7 +51,38 @@ router.post("/", async (req, res) => {
       medicalNotes,
       dentist: req.user._id,
     });
-    res.status(201).json(client);
+
+    // Record the (already-approved) association created by the dentist
+    await Association.create({
+      client: client._id,
+      dentist: req.user._id,
+      status: "approved",
+      initiatedBy: "dentist",
+      respondedAt: new Date(),
+    });
+
+    // Build shareable login credentials and email them to the client
+    const loginUrl = (process.env.CLIENT_ORIGIN || "http://localhost:5173") + "/login";
+    const shareMessage =
+      `Hi ${name}, Dr. ${req.user.name} created your MyDentalBooking account.\n\n` +
+      `Login: ${loginUrl}\n` +
+      `Email: ${email}\n` +
+      `Password: ${password}\n\n` +
+      `Please sign in and change your password.`;
+
+    sendMail({
+      to: email,
+      subject: "Your MyDentalBooking account",
+      text: shareMessage,
+      html: shareMessage.replace(/\n/g, "<br/>"),
+    }).catch((e) => console.error("creds email failed:", e?.message));
+
+    // Return the client plus credentials so the dentist can copy / share via WhatsApp
+    res.status(201).json({
+      client,
+      credentials: { email, phone: trimmedPhone || "", password },
+      shareMessage,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

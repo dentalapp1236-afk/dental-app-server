@@ -10,6 +10,10 @@ import dentistsRoutes from "./routes/dentists.js";
 import productsRoutes from "./routes/products.js";
 import ordersRoutes from "./routes/orders.js";
 import financesRoutes from "./routes/finances.js";
+import expensesRoutes from "./routes/expenses.js";
+import associationsRoutes from "./routes/associations.js";
+import notificationsRoutes from "./routes/notifications.js";
+import pushRoutes from "./routes/push.js";
 
 const app = express();
 
@@ -28,6 +32,10 @@ app.use("/api/dentists", dentistsRoutes);
 app.use("/api/products", productsRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/finances", financesRoutes);
+app.use("/api/expenses", expensesRoutes);
+app.use("/api/associations", associationsRoutes);
+app.use("/api/notifications", notificationsRoutes);
+app.use("/api/push", pushRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

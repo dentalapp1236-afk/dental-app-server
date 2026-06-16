@@ -1,6 +1,7 @@
 import express from "express";
 import Treatment from "../models/Treatment.js";
 import Order from "../models/Order.js";
+import Expense from "../models/Expense.js";
 import { protect, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -32,9 +33,17 @@ router.get("/summary", async (req, res) => {
       { $group: { _id: null, totalSpent: { $sum: "$total" }, orderCount: { $sum: 1 } } },
     ]);
 
+    // --- Maintenance expenses ---
+    const [maintenance] = await Expense.aggregate([
+      { $match: { dentist: dentistId } },
+      { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+    ]);
+
     const totalBilled = income?.totalBilled || 0;
     const totalCollected = income?.totalCollected || 0;
     const totalSpent = expense?.totalSpent || 0;
+    const totalMaintenance = maintenance?.total || 0;
+    const totalExpenses = totalSpent + totalMaintenance;
 
     // --- Monthly trend (last 6 months): collected income vs supply spend ---
     const incomeByMonth = await Treatment.aggregate([
@@ -46,7 +55,7 @@ router.get("/summary", async (req, res) => {
         },
       },
     ]);
-    const expenseByMonth = await Order.aggregate([
+    const orderByMonth = await Order.aggregate([
       { $match: { dentist: dentistId, status: { $ne: "cancelled" } } },
       {
         $group: {
@@ -55,6 +64,17 @@ router.get("/summary", async (req, res) => {
         },
       },
     ]);
+    const maintByMonth = await Expense.aggregate([
+      { $match: { dentist: dentistId } },
+      {
+        $group: {
+          _id: { y: { $year: "$date" }, m: { $month: "$date" } },
+          amount: { $sum: "$amount" },
+        },
+      },
+    ]);
+    // Combined expense series = supply orders + maintenance, summed per month
+    const expenseByMonth = mergeMonthly(orderByMonth, maintByMonth);
 
     const monthly = buildMonthlySeries(incomeByMonth, expenseByMonth, 6);
 
@@ -70,11 +90,14 @@ router.get("/summary", async (req, res) => {
         totalCollected,
         outstanding: totalBilled - totalCollected,
         totalSpent,
-        net: totalCollected - totalSpent,
+        totalMaintenance,
+        totalExpenses,
+        net: totalCollected - totalExpenses,
         treatmentCount: income?.treatmentCount || 0,
         paidCount: income?.paidCount || 0,
         unpaidCount: (income?.treatmentCount || 0) - (income?.paidCount || 0),
         orderCount: expense?.orderCount || 0,
+        maintenanceCount: maintenance?.count || 0,
       },
       monthly,
       unpaid,
@@ -84,6 +107,18 @@ router.get("/summary", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+// Sum two month-bucketed aggregates ([{_id:{y,m}, amount}]) into one
+function mergeMonthly(a, b) {
+  const map = new Map();
+  for (const r of [...a, ...b]) {
+    const k = `${r._id.y}-${r._id.m}`;
+    const existing = map.get(k);
+    if (existing) existing.amount += r.amount;
+    else map.set(k, { _id: { y: r._id.y, m: r._id.m }, amount: r.amount });
+  }
+  return [...map.values()];
+}
 
 // Merge income/expense aggregates into the last `count` calendar months (oldest first)
 function buildMonthlySeries(incomeAgg, expenseAgg, count) {
