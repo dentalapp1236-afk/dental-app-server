@@ -127,7 +127,10 @@ router.post("/forgot-password", async (req, res) => {
       user.resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
       await user.save();
 
-      const base = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+      const base = (process.env.CLIENT_ORIGIN || "http://localhost:5173")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "");
       const link = `${base}/reset-password?token=${token}`;
       await sendMail({
         to: user.email,

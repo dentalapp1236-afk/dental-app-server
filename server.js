@@ -17,8 +17,26 @@ import pushRoutes from "./routes/push.js";
 
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || "*", credentials: true }));
+// Allowed origins: comma-separated CLIENT_ORIGIN, trailing slashes stripped.
+// Empty -> allow all (dev). Tolerates www/non-www and trailing-slash mismatches.
+const allowedOrigins = (process.env.CLIENT_ORIGIN || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // non-browser / same-origin requests
+      const normalized = origin.replace(/\/+$/, "");
+      if (allowedOrigins.length === 0 || allowedOrigins.includes(normalized)) {
+        return cb(null, true);
+      }
+      return cb(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 

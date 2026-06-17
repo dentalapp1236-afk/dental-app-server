@@ -62,7 +62,11 @@ router.post("/", async (req, res) => {
     });
 
     // Build shareable login credentials and email them to the client
-    const loginUrl = (process.env.CLIENT_ORIGIN || "http://localhost:5173") + "/login";
+    const loginUrl =
+      (process.env.CLIENT_ORIGIN || "http://localhost:5173")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "") + "/login";
     const shareMessage =
       `Hi ${name}, Dr. ${req.user.name} created your MyDentalBooking account.\n\n` +
       `Login: ${loginUrl}\n` +
