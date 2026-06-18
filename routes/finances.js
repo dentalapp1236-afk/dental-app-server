@@ -13,16 +13,19 @@ router.get("/summary", async (req, res) => {
   try {
     const dentistId = req.user._id;
 
-    // --- Income from treatments ---
+    // --- Income from treatments (collected = sum of actual payments) ---
     const [income] = await Treatment.aggregate([
       { $match: { dentist: dentistId } },
+      { $addFields: { collected: { $sum: "$payments.amount" } } },
       {
         $group: {
           _id: null,
           totalBilled: { $sum: "$cost" },
-          totalCollected: { $sum: { $cond: ["$paid", "$cost", 0] } },
+          totalCollected: { $sum: "$collected" },
           treatmentCount: { $sum: 1 },
-          paidCount: { $sum: { $cond: ["$paid", 1, 0] } },
+          paidCount: {
+            $sum: { $cond: [{ $gte: ["$collected", "$cost"] }, 1, 0] },
+          },
         },
       },
     ]);
@@ -47,11 +50,12 @@ router.get("/summary", async (req, res) => {
 
     // --- Monthly trend (last 6 months): collected income vs supply spend ---
     const incomeByMonth = await Treatment.aggregate([
-      { $match: { dentist: dentistId, paid: true } },
+      { $match: { dentist: dentistId } },
+      { $unwind: "$payments" },
       {
         $group: {
-          _id: { y: { $year: "$date" }, m: { $month: "$date" } },
-          amount: { $sum: "$cost" },
+          _id: { y: { $year: "$payments.date" }, m: { $month: "$payments.date" } },
+          amount: { $sum: "$payments.amount" },
         },
       },
     ]);
@@ -79,7 +83,10 @@ router.get("/summary", async (req, res) => {
     const monthly = buildMonthlySeries(incomeByMonth, expenseByMonth, 6);
 
     // --- Outstanding (unpaid) treatments ---
-    const unpaid = await Treatment.find({ dentist: dentistId, paid: false })
+    const unpaid = await Treatment.find({
+      dentist: dentistId,
+      $expr: { $lt: [{ $sum: "$payments.amount" }, "$cost"] },
+    })
       .populate("client", "name")
       .sort({ date: -1 })
       .limit(50);

@@ -1,5 +1,15 @@
 import mongoose from "mongoose";
 
+// A single payment made toward a treatment (upfront deposit or a per-visit charge)
+const paymentSchema = new mongoose.Schema(
+  {
+    amount: { type: Number, required: true, min: 0 },
+    date: { type: Date, default: Date.now },
+    note: { type: String, trim: true },
+  },
+  { _id: true }
+);
+
 const treatmentSchema = new mongoose.Schema(
   {
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -9,11 +19,24 @@ const treatmentSchema = new mongoose.Schema(
     toothNumber: { type: String },
     diagnosis: { type: String },
     description: { type: String },
-    cost: { type: Number, default: 0 },
-    paid: { type: Boolean, default: false },
+    cost: { type: Number, default: 0 }, // total agreed amount
+    payments: { type: [paymentSchema], default: [] }, // upfront + per-visit charges
+    paid: { type: Boolean, default: false }, // derived: balance <= 0
     date: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
+
+// Total collected so far and remaining balance
+treatmentSchema.virtual("paidAmount").get(function () {
+  return (this.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
+});
+treatmentSchema.virtual("balance").get(function () {
+  return Math.max(0, (this.cost || 0) - this.paidAmount);
+});
 
 export default mongoose.model("Treatment", treatmentSchema);

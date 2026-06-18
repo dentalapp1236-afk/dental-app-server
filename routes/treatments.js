@@ -36,12 +36,16 @@ router.post("/", async (req, res) => {
       diagnosis,
       description,
       cost,
-      paid,
+      upfront,
       date,
     } = req.body;
     if (!client || !procedure) {
       return res.status(400).json({ message: "client and procedure are required" });
     }
+    const total = Number(cost) || 0;
+    const deposit = Number(upfront) || 0;
+    const payments = deposit > 0 ? [{ amount: deposit, note: "Upfront" }] : [];
+
     const tr = await Treatment.create({
       dentist: req.user._id,
       client,
@@ -50,8 +54,9 @@ router.post("/", async (req, res) => {
       toothNumber,
       diagnosis,
       description,
-      cost,
-      paid,
+      cost: total,
+      payments,
+      paid: deposit >= total && total > 0,
       date,
     });
     res.status(201).json(tr);
@@ -61,18 +66,54 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/treatments/:id
+// PUT /api/treatments/:id  (edit fields; paid:true settles the remaining balance)
 router.put("/:id", async (req, res) => {
-  if (req.user.role !== "dentist") {
-    return res.status(403).json({ message: "Only dentists can update treatments" });
+  try {
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only dentists can update treatments" });
+    }
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+
+    const editable = ["procedure", "toothNumber", "diagnosis", "description", "date"];
+    for (const f of editable) if (req.body[f] !== undefined) tr[f] = req.body[f];
+    if (req.body.cost !== undefined) tr.cost = Number(req.body.cost) || 0;
+
+    // paid:true -> record a settlement payment for whatever balance remains
+    if (req.body.paid === true && tr.balance > 0) {
+      tr.payments.push({ amount: tr.balance, note: "Settled" });
+    }
+    tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+
+    await tr.save();
+    res.json(tr);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
-  const tr = await Treatment.findOneAndUpdate(
-    { _id: req.params.id, dentist: req.user._id },
-    req.body,
-    { new: true }
-  );
-  if (!tr) return res.status(404).json({ message: "Treatment not found" });
-  res.json(tr);
+});
+
+// POST /api/treatments/:id/payments  (record a per-visit payment)
+router.post("/:id/payments", async (req, res) => {
+  try {
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only dentists can record payments" });
+    }
+    const amount = Number(req.body.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "A positive amount is required" });
+    }
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+
+    tr.payments.push({ amount, note: req.body.note, date: req.body.date || new Date() });
+    tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    await tr.save();
+    res.status(201).json(tr);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 // DELETE /api/treatments/:id
