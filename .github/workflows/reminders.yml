@@ -1,0 +1,18 @@
+name: Appointment reminders
+
+# Triggers the 24h appointment-reminder check on a schedule, independent of
+# whether the Render instance is awake. Also runnable manually.
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes (UTC)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reminder run
+        run: |
+          curl -fsS -X POST \
+            "${{ secrets.API_BASE_URL }}/api/cron/run-reminders" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"

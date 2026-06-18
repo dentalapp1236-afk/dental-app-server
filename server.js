@@ -14,6 +14,8 @@ import expensesRoutes from "./routes/expenses.js";
 import associationsRoutes from "./routes/associations.js";
 import notificationsRoutes from "./routes/notifications.js";
 import pushRoutes from "./routes/push.js";
+import cronRoutes from "./routes/cron.js";
+import { startAppointmentReminders } from "./jobs/reminders.js";
 
 const app = express();
 
@@ -54,6 +56,7 @@ app.use("/api/expenses", expensesRoutes);
 app.use("/api/associations", associationsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/push", pushRoutes);
+app.use("/api/cron", cronRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);
@@ -62,7 +65,10 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 connectDB()
-  .then(() => app.listen(PORT, () => console.log(`API listening on :${PORT}`)))
+  .then(() => {
+    app.listen(PORT, () => console.log(`API listening on :${PORT}`));
+    startAppointmentReminders();
+  })
   .catch((err) => {
     console.error("Failed to start:", err.message);
     process.exit(1);

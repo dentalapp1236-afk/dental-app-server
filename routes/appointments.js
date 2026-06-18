@@ -109,6 +109,57 @@ router.put("/:id", async (req, res) => {
   res.json(appt);
 });
 
+// PATCH /api/appointments/:id/reschedule  (client moves their own appointment)
+router.patch("/:id/reschedule", async (req, res) => {
+  try {
+    if (req.user.role !== "client") {
+      return res.status(403).json({ message: "Only the client can reschedule" });
+    }
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ message: "New date is required" });
+
+    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
+    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+
+    appt.date = date;
+    appt.status = "scheduled";
+    appt.reminderSent = false; // re-arm the 24h reminder for the new time
+    await appt.save();
+
+    const populated = await appt.populate([
+      { path: "dentist", select: "name email" },
+      { path: "client", select: "name" },
+    ]);
+    const when = fmtWhen(date);
+    const body = `${populated.client.name} rescheduled their appointment to ${when}.`;
+
+    Notification.create({
+      user: populated.dentist._id,
+      type: "appointment_rescheduled",
+      title: "Appointment rescheduled",
+      body,
+      data: { url: "/appointments", appointmentId: appt._id },
+    }).catch((e) => console.error("notif failed:", e?.message));
+
+    sendPush(populated.dentist._id, { title: "Appointment rescheduled", body, url: "/appointments" });
+
+    if (populated.dentist.email) {
+      const text = `Hi Dr. ${populated.dentist.name},\n\n${body}`;
+      sendMail({
+        to: populated.dentist.email,
+        subject: "Appointment rescheduled — MyDentalBooking",
+        text,
+        html: text.replace(/\n/g, "<br/>"),
+      }).catch((e) => console.error("reschedule email failed:", e?.message));
+    }
+
+    res.json(populated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // DELETE /api/appointments/:id
 router.delete("/:id", async (req, res) => {
   if (req.user.role !== "dentist") {
