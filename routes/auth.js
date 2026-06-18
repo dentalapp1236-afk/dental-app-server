@@ -132,7 +132,7 @@ router.post("/forgot-password", async (req, res) => {
         .trim()
         .replace(/\/+$/, "");
       const link = `${base}/reset-password?token=${token}`;
-      await sendMail({
+      const result = await sendMail({
         to: user.email,
         subject: "Reset your MyDentalBooking password",
         text: `We received a request to reset your password.\n\nUse this link within 1 hour:\n${link}\n\nIf you didn't request this, you can ignore this email.`,
@@ -140,6 +140,25 @@ router.post("/forgot-password", async (req, res) => {
                <p>Use this link within 1 hour:</p>
                <p><a href="${link}">${link}</a></p>
                <p>If you didn't request this, you can ignore this email.</p>`,
+      });
+      if (!result.delivered) {
+        console.error(
+          `[forgot-password] reset email to ${user.email} was NOT delivered: ${result.reason}`
+        );
+      }
+      // Opt-in diagnostics: set MAIL_DEBUG=true to learn whether the email
+      // actually went out (and why not). Off by default so we don't leak which
+      // addresses are registered.
+      if (process.env.MAIL_DEBUG === "true") {
+        return res.json({
+          message: "If that email is registered, a reset link has been sent.",
+          debug: { found: true, delivered: result.delivered, reason: result.reason || null },
+        });
+      }
+    } else if (process.env.MAIL_DEBUG === "true") {
+      return res.json({
+        message: "If that email is registered, a reset link has been sent.",
+        debug: { found: false },
       });
     }
 

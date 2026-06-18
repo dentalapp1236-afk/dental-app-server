@@ -43,6 +43,32 @@ router.post("/", async (req, res) => {
   }
 });
 
+// PUT /api/expenses/:id -> update an existing expense
+router.put("/:id", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+    const { title, category, amount, date, notes } = req.body;
+    if (!title || amount == null) {
+      return res.status(400).json({ message: "title and amount are required" });
+    }
+    if (Number(amount) < 0) {
+      return res.status(400).json({ message: "amount cannot be negative" });
+    }
+    const expense = await Expense.findOneAndUpdate(
+      { _id: req.params.id, dentist: req.user._id },
+      { title, category, amount: Number(amount), date, notes },
+      { new: true }
+    );
+    if (!expense) return res.status(404).json({ message: "Expense not found" });
+    res.json(expense);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // DELETE /api/expenses/:id
 router.delete("/:id", async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
