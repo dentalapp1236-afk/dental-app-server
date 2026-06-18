@@ -106,10 +106,74 @@ router.post("/:id/payments", async (req, res) => {
     const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
 
+    if (amount > tr.balance) {
+      return res
+        .status(400)
+        .json({ message: `Amount cannot exceed the remaining balance (${tr.balance}).` });
+    }
+
     tr.payments.push({ amount, note: req.body.note, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
     res.status(201).json(tr);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PUT /api/treatments/:id/payments/:paymentId  (edit a recorded payment)
+router.put("/:id/payments/:paymentId", async (req, res) => {
+  try {
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only dentists can edit payments" });
+    }
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+    const pay = tr.payments.id(req.params.paymentId);
+    if (!pay) return res.status(404).json({ message: "Payment not found" });
+
+    if (req.body.amount !== undefined) {
+      const amount = Number(req.body.amount);
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ message: "A positive amount is required" });
+      }
+      // The other payments plus this new amount must not exceed the treatment cost.
+      const others = tr.paidAmount - pay.amount;
+      if (tr.cost > 0 && others + amount > tr.cost) {
+        return res
+          .status(400)
+          .json({ message: `Amount cannot exceed the remaining balance (${tr.cost - others}).` });
+      }
+      pay.amount = amount;
+    }
+    if (req.body.note !== undefined) pay.note = req.body.note;
+    if (req.body.date !== undefined) pay.date = req.body.date;
+
+    tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    await tr.save();
+    res.json(tr);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// DELETE /api/treatments/:id/payments/:paymentId  (remove a recorded payment)
+router.delete("/:id/payments/:paymentId", async (req, res) => {
+  try {
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only dentists can delete payments" });
+    }
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+    const pay = tr.payments.id(req.params.paymentId);
+    if (!pay) return res.status(404).json({ message: "Payment not found" });
+
+    pay.deleteOne();
+    tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    await tr.save();
+    res.json(tr);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

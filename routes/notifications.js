@@ -34,6 +34,15 @@ router.post("/:id/read", async (req, res) => {
   res.json({ message: "ok" });
 });
 
+// POST /api/notifications/:id/unread -> mark one as unread
+router.post("/:id/unread", async (req, res) => {
+  await Notification.findOneAndUpdate(
+    { _id: req.params.id, user: req.user._id },
+    { read: false }
+  );
+  res.json({ message: "ok" });
+});
+
 // DELETE /api/notifications -> clear all of the user's notifications
 router.delete("/", async (req, res) => {
   await Notification.deleteMany({ user: req.user._id });
