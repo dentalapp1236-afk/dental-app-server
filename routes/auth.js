@@ -190,4 +190,62 @@ router.get("/me", protect, async (req, res) => {
   res.json({ user: req.user });
 });
 
+// PUT /api/auth/me -> update own profile (role-aware fields)
+router.put("/me", protect, async (req, res) => {
+  try {
+    const u = req.user;
+    const b = req.body;
+
+    if (b.name != null) u.name = b.name;
+
+    if (b.phone != null) {
+      const trimmed = b.phone.trim();
+      if (trimmed) {
+        const exists = await User.findOne({ phone: trimmed, _id: { $ne: u._id } });
+        if (exists) return res.status(409).json({ message: "Phone already in use" });
+        u.phone = trimmed;
+      } else {
+        u.phone = undefined;
+      }
+    }
+
+    if (u.role === "client") {
+      if (b.dateOfBirth !== undefined) u.dateOfBirth = b.dateOfBirth || undefined;
+      if (b.address !== undefined) u.address = b.address;
+    }
+
+    if (u.role === "vendor") {
+      if (b.companyName !== undefined) u.companyName = b.companyName;
+    }
+
+    if (u.role === "dentist") {
+      if (b.clinicName !== undefined) u.clinicName = b.clinicName;
+      if (b.specialization !== undefined) u.specialization = b.specialization;
+      if (b.about !== undefined) u.about = b.about;
+      if (b.address !== undefined) u.address = b.address;
+      if (b.yearsOfExperience !== undefined && b.yearsOfExperience !== "") {
+        u.yearsOfExperience = Number(b.yearsOfExperience);
+      }
+      if (Array.isArray(b.availability)) u.availability = b.availability;
+      if (
+        b.latitude != null &&
+        b.longitude != null &&
+        b.latitude !== "" &&
+        b.longitude !== ""
+      ) {
+        u.location = {
+          type: "Point",
+          coordinates: [Number(b.longitude), Number(b.latitude)],
+        };
+      }
+    }
+
+    await u.save();
+    res.json({ user: u });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 export default router;
