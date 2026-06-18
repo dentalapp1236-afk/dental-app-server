@@ -40,8 +40,11 @@ router.post("/", async (req, res) => {
       return res.status(403).json({ message: "Only dentists can create appointments" });
     }
     const { client, date, reason, notes } = req.body;
-    if (!client || !date || !reason) {
-      return res.status(400).json({ message: "client, date, reason required" });
+    if (!client || !date) {
+      return res.status(400).json({ message: "client and date are required" });
+    }
+    if (new Date(date).getTime() < Date.now()) {
+      return res.status(400).json({ message: "Appointment cannot be in the past" });
     }
     const appt = await Appointment.create({
       dentist: req.user._id,
@@ -117,6 +120,9 @@ router.patch("/:id/reschedule", async (req, res) => {
     }
     const { date } = req.body;
     if (!date) return res.status(400).json({ message: "New date is required" });
+    if (new Date(date).getTime() < Date.now()) {
+      return res.status(400).json({ message: "Appointment cannot be in the past" });
+    }
 
     const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
     if (!appt) return res.status(404).json({ message: "Appointment not found" });
