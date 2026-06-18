@@ -34,4 +34,16 @@ router.post("/:id/read", async (req, res) => {
   res.json({ message: "ok" });
 });
 
+// DELETE /api/notifications -> clear all of the user's notifications
+router.delete("/", async (req, res) => {
+  await Notification.deleteMany({ user: req.user._id });
+  res.json({ message: "cleared" });
+});
+
+// DELETE /api/notifications/:id -> dismiss one
+router.delete("/:id", async (req, res) => {
+  await Notification.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+  res.json({ message: "deleted" });
+});
+
 export default router;
