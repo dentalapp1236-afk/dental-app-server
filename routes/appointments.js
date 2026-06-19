@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import Appointment from "../models/Appointment.js";
 import Notification from "../models/Notification.js";
 import User from "../models/User.js";
@@ -30,11 +31,44 @@ const dentistNameFor = async (user) => {
   return user.name;
 };
 
-// True if another *scheduled* appointment already occupies this exact slot at the clinic.
+// True if a scheduled or pending appointment already occupies this exact slot.
+const ACTIVE = ["scheduled", "pending"];
 const slotConflict = async (dentistId, date, exceptId) => {
-  const query = { dentist: dentistId, status: "scheduled", date: new Date(date) };
+  const query = { dentist: dentistId, status: { $in: ACTIVE }, date: new Date(date) };
   if (exceptId) query._id = { $ne: exceptId };
   return Appointment.findOne(query);
+};
+
+// Calendar-day window [start, end) for the given instant.
+const dayRange = (date) => {
+  const d = new Date(date);
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+};
+
+// True if the patient already has an active (scheduled/pending) appointment that day.
+// One appointment per patient per day keeps the schedule sane.
+const patientDayConflict = async (clientId, date, exceptId) => {
+  const { start, end } = dayRange(date);
+  const query = { client: clientId, status: { $in: ACTIVE }, date: { $gte: start, $lt: end } };
+  if (exceptId) query._id = { $ne: exceptId };
+  return Appointment.findOne(query);
+};
+
+// Notify a user in-app + push + (optionally) email.
+const notifyUser = async (userId, { type, title, body, url, email }) => {
+  Notification.create({ user: userId, type, title, body, data: { url } }).catch((e) =>
+    console.error("notif failed:", e?.message)
+  );
+  sendPush(userId, { title, body, url });
+  if (email?.to) {
+    const text = `${email.greeting || ""}${body}`;
+    sendMail({ to: email.to, subject: title, text, html: text.replace(/\n/g, "<br/>") }).catch(
+      (e) => console.error("email failed:", e?.message)
+    );
+  }
 };
 
 // GET /api/appointments
@@ -49,6 +83,42 @@ router.get("/", async (req, res) => {
     .populate("dentist", "name email")
     .sort({ date: -1 });
   res.json(appts);
+});
+
+// GET /api/appointments/booked?from=ISO&to=ISO&exclude=<id>
+// Returns the datetimes of scheduled appointments for the relevant clinic within
+// [from, to), so the UI can show which slots are taken. Scoped by role:
+// staff -> their clinic; client -> their associated dentist.
+router.get("/booked", async (req, res) => {
+  try {
+    const dentistId = isStaff(req.user)
+      ? clinicId(req.user)
+      : req.user.role === "client"
+      ? req.user.dentist
+      : null;
+    if (!dentistId) return res.json({ slots: [] });
+
+    const q = { dentist: dentistId, status: { $in: ACTIVE } };
+    const { from, to, exclude } = req.query;
+    if (from || to) {
+      q.date = {};
+      if (from) q.date.$gte = new Date(from);
+      if (to) q.date.$lt = new Date(to);
+    }
+    if (exclude && mongoose.isValidObjectId(exclude)) q._id = { $ne: exclude };
+
+    const [appts, dentist] = await Promise.all([
+      Appointment.find(q).select("date").lean(),
+      User.findById(dentistId).select("availability").lean(),
+    ]);
+    res.json({
+      slots: appts.map((a) => a.date),
+      availability: dentist?.availability || [],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 // POST /api/appointments (clinic staff create)
@@ -69,6 +139,12 @@ router.post("/", async (req, res) => {
       return res.status(409).json({
         message: "Another appointment is already scheduled at this date and time.",
         code: "SLOT_TAKEN",
+      });
+    }
+    if (await patientDayConflict(client, date)) {
+      return res.status(409).json({
+        message: "This patient already has an appointment on this day.",
+        code: "PATIENT_DAY_TAKEN",
       });
     }
     const appt = await Appointment.create({
@@ -121,6 +197,151 @@ router.post("/", async (req, res) => {
   }
 });
 
+// POST /api/appointments/request  (client requests an appointment with their dentist)
+router.post("/request", async (req, res) => {
+  try {
+    if (req.user.role !== "client") {
+      return res.status(403).json({ message: "Only patients can request appointments" });
+    }
+    const dentistId = req.user.dentist;
+    if (!dentistId) {
+      return res.status(400).json({ message: "You are not associated with a dentist yet." });
+    }
+    const { date, reason } = req.body;
+    if (!date) return res.status(400).json({ message: "Please pick a time slot." });
+    if (new Date(date).getTime() < Date.now()) {
+      return res.status(400).json({ message: "Appointment cannot be in the past" });
+    }
+    if (await slotConflict(dentistId, date)) {
+      return res.status(409).json({
+        message: "That slot was just taken. Please pick another time.",
+        code: "SLOT_TAKEN",
+      });
+    }
+    if (await patientDayConflict(req.user._id, date)) {
+      return res.status(409).json({
+        message: "You already have an appointment on this day.",
+        code: "PATIENT_DAY_TAKEN",
+      });
+    }
+
+    const appt = await Appointment.create({
+      dentist: dentistId,
+      client: req.user._id,
+      date,
+      reason,
+      status: "pending",
+    });
+
+    const when = fmtWhen(date);
+    const dentist = await User.findById(dentistId).select("name email");
+    const body = `${req.user.name} requested an appointment on ${when}${
+      reason ? ` for ${reason}` : ""
+    }.`;
+    await notifyUser(dentistId, {
+      type: "appointment_requested",
+      title: "New appointment request",
+      body,
+      url: "/appointments",
+      email: dentist?.email ? { to: dentist.email, greeting: `Hi Dr. ${dentist.name},\n\n` } : null,
+    });
+
+    res.status(201).json({ appointment: appt });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/appointments/:id/confirm  (staff approves a pending request)
+router.patch("/:id/confirm", async (req, res) => {
+  try {
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can confirm requests" });
+    }
+    const dentistId = clinicId(req.user);
+    const appt = await Appointment.findOne({ _id: req.params.id, dentist: dentistId, status: "pending" });
+    if (!appt) return res.status(404).json({ message: "Request not found" });
+
+    // Make sure the slot wasn't taken by someone else since the request came in.
+    if (await slotConflict(dentistId, appt.date, appt._id)) {
+      return res.status(409).json({
+        message: "That slot is already taken — decline this request or reschedule.",
+        code: "SLOT_TAKEN",
+      });
+    }
+    if (await patientDayConflict(appt.client, appt.date, appt._id)) {
+      return res.status(409).json({
+        message: "This patient already has another appointment on this day.",
+        code: "PATIENT_DAY_TAKEN",
+      });
+    }
+
+    appt.status = "scheduled";
+    appt.reminderSent = false;
+    await appt.save();
+    const populated = await appt.populate([
+      { path: "client", select: "name email phone" },
+      { path: "dentist", select: "name email" },
+    ]);
+
+    const dName = await dentistNameFor(req.user);
+    const when = fmtWhen(appt.date);
+    const body = `Dr. ${dName} confirmed your appointment on ${when}.`;
+    await notifyUser(populated.client._id, {
+      type: "appointment_confirmed",
+      title: "Appointment confirmed",
+      body,
+      url: "/client",
+      email: populated.client.email
+        ? { to: populated.client.email, greeting: `Hi ${populated.client.name},\n\n` }
+        : null,
+    });
+
+    res.json(populated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/appointments/:id/decline  (staff declines a pending request)
+router.patch("/:id/decline", async (req, res) => {
+  try {
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can decline requests" });
+    }
+    const dentistId = clinicId(req.user);
+    const appt = await Appointment.findOne({ _id: req.params.id, dentist: dentistId, status: "pending" });
+    if (!appt) return res.status(404).json({ message: "Request not found" });
+
+    appt.status = "cancelled";
+    await appt.save();
+    const populated = await appt.populate([
+      { path: "client", select: "name email phone" },
+      { path: "dentist", select: "name email" },
+    ]);
+
+    const dName = await dentistNameFor(req.user);
+    const when = fmtWhen(appt.date);
+    const body = `Dr. ${dName} could not confirm your requested appointment on ${when}. Please pick another time.`;
+    await notifyUser(populated.client._id, {
+      type: "appointment_declined",
+      title: "Appointment request declined",
+      body,
+      url: "/client",
+      email: populated.client.email
+        ? { to: populated.client.email, greeting: `Hi ${populated.client.name},\n\n` }
+        : null,
+    });
+
+    res.json(populated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // PUT /api/appointments/:id  (clinic staff update)
 router.put("/:id", async (req, res) => {
   try {
@@ -146,6 +367,12 @@ router.put("/:id", async (req, res) => {
       return res.status(409).json({
         message: "Another appointment is already scheduled at this date and time.",
         code: "SLOT_TAKEN",
+      });
+    }
+    if (date && ACTIVE.includes(nextStatus) && (await patientDayConflict(current.client, date, current._id))) {
+      return res.status(409).json({
+        message: "This patient already has an appointment on this day.",
+        code: "PATIENT_DAY_TAKEN",
       });
     }
 
@@ -195,6 +422,12 @@ router.patch("/:id/reschedule", async (req, res) => {
       return res.status(409).json({
         message: "That slot is already taken. Please pick a different time.",
         code: "SLOT_TAKEN",
+      });
+    }
+    if (await patientDayConflict(req.user._id, date, appt._id)) {
+      return res.status(409).json({
+        message: "You already have another appointment on this day.",
+        code: "PATIENT_DAY_TAKEN",
       });
     }
 
