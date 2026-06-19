@@ -27,14 +27,19 @@ router.get("/", async (req, res) => {
 // POST /api/clients -> create a new client record (dentist creating on behalf of client)
 router.post("/", async (req, res) => {
   try {
-    const { name, email, password, phone, dateOfBirth, address, medicalNotes } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "name, email, password required" });
+    const { name, email, password, phone, dateOfBirth } = req.body;
+    if (!name || !password) {
+      return res.status(400).json({ message: "name and password are required" });
     }
-    const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(409).json({ message: "Email already in use" });
-
-    const trimmedPhone = phone?.trim();
+    const cleanEmail = email?.trim().toLowerCase() || undefined;
+    const trimmedPhone = phone?.trim() || undefined;
+    if (!cleanEmail && !trimmedPhone) {
+      return res.status(400).json({ message: "Provide an email or phone so the patient can sign in." });
+    }
+    if (cleanEmail) {
+      const exists = await User.findOne({ email: cleanEmail });
+      if (exists) return res.status(409).json({ message: "Email already in use" });
+    }
     if (trimmedPhone) {
       const phoneExists = await User.findOne({ phone: trimmedPhone });
       if (phoneExists) return res.status(409).json({ message: "Phone already in use" });
@@ -42,13 +47,11 @@ router.post("/", async (req, res) => {
 
     const client = await User.create({
       name,
-      email,
+      email: cleanEmail,
       password,
       role: "client",
-      phone: trimmedPhone || undefined,
+      phone: trimmedPhone,
       dateOfBirth,
-      address,
-      medicalNotes,
       dentist: req.user._id,
     });
 
@@ -70,21 +73,24 @@ router.post("/", async (req, res) => {
     const shareMessage =
       `Hi ${name}, Dr. ${req.user.name} created your MyDentalBooking account.\n\n` +
       `Login: ${loginUrl}\n` +
-      `Email: ${email}\n` +
+      (cleanEmail ? `Email: ${cleanEmail}\n` : `Phone: ${trimmedPhone}\n`) +
       `Password: ${password}\n\n` +
       `Please sign in and change your password.`;
 
-    sendMail({
-      to: email,
-      subject: "Your MyDentalBooking account",
-      text: shareMessage,
-      html: shareMessage.replace(/\n/g, "<br/>"),
-    }).catch((e) => console.error("creds email failed:", e?.message));
+    // Email the credentials only when we have an email address to send to.
+    if (cleanEmail) {
+      sendMail({
+        to: cleanEmail,
+        subject: "Your MyDentalBooking account",
+        text: shareMessage,
+        html: shareMessage.replace(/\n/g, "<br/>"),
+      }).catch((e) => console.error("creds email failed:", e?.message));
+    }
 
     // Return the client plus credentials so the dentist can copy / share via WhatsApp
     res.status(201).json({
       client,
-      credentials: { email, phone: trimmedPhone || "", password },
+      credentials: { email: cleanEmail || "", phone: trimmedPhone || "", password },
       shareMessage,
     });
   } catch (err) {

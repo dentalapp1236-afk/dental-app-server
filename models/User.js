@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    email: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     phone: { type: String, trim: true, unique: true, sparse: true },
     password: { type: String, required: true, minlength: 8 },
     role: { type: String, enum: ["dentist", "client", "vendor"], required: true },
@@ -51,9 +51,10 @@ const userSchema = new mongoose.Schema(
 // Geospatial index powers $near queries for nearest-dentist discovery
 userSchema.index({ location: "2dsphere" });
 
-// Avoid storing empty-string phones, which would violate the sparse unique index
+// Avoid storing empty-string phone/email, which would violate the sparse unique indexes
 userSchema.pre("save", function (next) {
   if (this.phone === "" || this.phone === null) this.phone = undefined;
+  if (this.email === "" || this.email === null) this.email = undefined;
   next();
 });
 

@@ -16,6 +16,7 @@ import notificationsRoutes from "./routes/notifications.js";
 import pushRoutes from "./routes/push.js";
 import cronRoutes from "./routes/cron.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
+import User from "./models/User.js";
 
 const app = express();
 
@@ -68,6 +69,9 @@ connectDB()
   .then(() => {
     app.listen(PORT, () => console.log(`API listening on :${PORT}`));
     startAppointmentReminders();
+    // Reconcile indexes so the email unique index becomes sparse (lets multiple
+    // patients exist without an email). Safe + idempotent on a small collection.
+    User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
   })
   .catch((err) => {
     console.error("Failed to start:", err.message);
