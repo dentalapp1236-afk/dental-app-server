@@ -1,12 +1,15 @@
 import express from "express";
 import Appointment from "../models/Appointment.js";
 import Notification from "../models/Notification.js";
+import User from "../models/User.js";
 import { sendPush } from "../utils/push.js";
 import { sendMail } from "../utils/mailer.js";
-import { protect } from "../middleware/auth.js";
+import { protect, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 router.use(protect);
+
+const isStaff = (user) => user.role === "dentist" || user.role === "assistant";
 
 const fmtWhen = (d) =>
   new Date(d).toLocaleString("en-GB", {
@@ -18,14 +21,29 @@ const fmtWhen = (d) =>
     hour12: true,
   });
 
+// Assistants act on behalf of their dentist — resolve the dentist's display name.
+const dentistNameFor = async (user) => {
+  if (user.role === "assistant") {
+    const d = await User.findById(user.dentist).select("name");
+    return d?.name || "your dentist";
+  }
+  return user.name;
+};
+
+// True if another *scheduled* appointment already occupies this exact slot at the clinic.
+const slotConflict = async (dentistId, date, exceptId) => {
+  const query = { dentist: dentistId, status: "scheduled", date: new Date(date) };
+  if (exceptId) query._id = { $ne: exceptId };
+  return Appointment.findOne(query);
+};
+
 // GET /api/appointments
 // Dentist: appointments where they are the dentist
 // Client: appointments where they are the client
 router.get("/", async (req, res) => {
-  const filter =
-    req.user.role === "dentist"
-      ? { dentist: req.user._id }
-      : { client: req.user._id };
+  const filter = isStaff(req.user)
+    ? { dentist: clinicId(req.user) }
+    : { client: req.user._id };
   const appts = await Appointment.find(filter)
     .populate("client", "name email phone")
     .populate("dentist", "name email")
@@ -33,12 +51,13 @@ router.get("/", async (req, res) => {
   res.json(appts);
 });
 
-// POST /api/appointments (dentist creates)
+// POST /api/appointments (clinic staff create)
 router.post("/", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can create appointments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can create appointments" });
     }
+    const dentistId = clinicId(req.user);
     const { client, date, reason, notes } = req.body;
     if (!client || !date) {
       return res.status(400).json({ message: "client and date are required" });
@@ -46,8 +65,14 @@ router.post("/", async (req, res) => {
     if (new Date(date).getTime() < Date.now()) {
       return res.status(400).json({ message: "Appointment cannot be in the past" });
     }
+    if (await slotConflict(dentistId, date)) {
+      return res.status(409).json({
+        message: "Another appointment is already scheduled at this date and time.",
+        code: "SLOT_TAKEN",
+      });
+    }
     const appt = await Appointment.create({
-      dentist: req.user._id,
+      dentist: dentistId,
       client,
       date,
       reason,
@@ -58,10 +83,11 @@ router.post("/", async (req, res) => {
       { path: "dentist", select: "name email" },
     ]);
 
-    // Notify the client: in-app + web push + email; give the dentist a WhatsApp link
+    // Notify the client: in-app + web push + email; give staff a WhatsApp link
     const c = populated.client;
+    const dName = await dentistNameFor(req.user);
     const when = fmtWhen(date);
-    const body = `Dr. ${req.user.name} scheduled your appointment on ${when}${
+    const body = `Dr. ${dName} scheduled your appointment on ${when}${
       reason ? ` for ${reason}` : ""
     }.`;
 
@@ -76,7 +102,7 @@ router.post("/", async (req, res) => {
     sendPush(c._id, { title: "Appointment scheduled", body, url: "/client" });
 
     if (c.email) {
-      const text = `Hi ${c.name},\n\n${body}\n\nClinic: Dr. ${req.user.name}\n\nSee you then!`;
+      const text = `Hi ${c.name},\n\n${body}\n\nClinic: Dr. ${dName}\n\nSee you then!`;
       sendMail({
         to: c.email,
         subject: "Your appointment is scheduled — MyDentalBooking",
@@ -95,21 +121,59 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/appointments/:id  (dentist updates)
+// PUT /api/appointments/:id  (clinic staff update)
 router.put("/:id", async (req, res) => {
-  if (req.user.role !== "dentist") {
-    return res.status(403).json({ message: "Only dentists can update appointments" });
+  try {
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can update appointments" });
+    }
+    const dentistId = clinicId(req.user);
+    const { date, reason, notes, status, version } = req.body;
+
+    const current = await Appointment.findOne({ _id: req.params.id, dentist: dentistId });
+    if (!current) return res.status(404).json({ message: "Appointment not found" });
+
+    // Optimistic concurrency: reject if the record changed since the client loaded it.
+    if (version !== undefined && Number(version) !== current.__v) {
+      return res.status(409).json({
+        message: "This appointment was just changed by someone else. Refresh to see the latest, then try again.",
+        code: "STALE",
+      });
+    }
+
+    const nextStatus = status ?? current.status;
+    if (date && nextStatus === "scheduled" && (await slotConflict(dentistId, date, current._id))) {
+      return res.status(409).json({
+        message: "Another appointment is already scheduled at this date and time.",
+        code: "SLOT_TAKEN",
+      });
+    }
+
+    const set = {};
+    if (date !== undefined) set.date = date;
+    if (reason !== undefined) set.reason = reason;
+    if (notes !== undefined) set.notes = notes;
+    if (status !== undefined) set.status = status;
+
+    // Guard the write with the version we validated, bumping it atomically.
+    const appt = await Appointment.findOneAndUpdate(
+      { _id: current._id, dentist: dentistId, __v: current.__v },
+      { $set: set, $inc: { __v: 1 } },
+      { new: true }
+    )
+      .populate("client", "name email phone")
+      .populate("dentist", "name email");
+    if (!appt) {
+      return res.status(409).json({
+        message: "This appointment was just changed by someone else. Refresh and try again.",
+        code: "STALE",
+      });
+    }
+    res.json(appt);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
-  const { date, reason, notes, status } = req.body;
-  const appt = await Appointment.findOneAndUpdate(
-    { _id: req.params.id, dentist: req.user._id },
-    { date, reason, notes, status },
-    { new: true }
-  )
-    .populate("client", "name email phone")
-    .populate("dentist", "name email");
-  if (!appt) return res.status(404).json({ message: "Appointment not found" });
-  res.json(appt);
 });
 
 // PATCH /api/appointments/:id/reschedule  (client moves their own appointment)
@@ -126,6 +190,13 @@ router.patch("/:id/reschedule", async (req, res) => {
 
     const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
     if (!appt) return res.status(404).json({ message: "Appointment not found" });
+
+    if (await slotConflict(appt.dentist, date, appt._id)) {
+      return res.status(409).json({
+        message: "That slot is already taken. Please pick a different time.",
+        code: "SLOT_TAKEN",
+      });
+    }
 
     appt.date = date;
     appt.status = "scheduled";
@@ -168,12 +239,12 @@ router.patch("/:id/reschedule", async (req, res) => {
 
 // DELETE /api/appointments/:id
 router.delete("/:id", async (req, res) => {
-  if (req.user.role !== "dentist") {
-    return res.status(403).json({ message: "Only dentists can delete appointments" });
+  if (!isStaff(req.user)) {
+    return res.status(403).json({ message: "Only clinic staff can delete appointments" });
   }
   const appt = await Appointment.findOneAndDelete({
     _id: req.params.id,
-    dentist: req.user._id,
+    dentist: clinicId(req.user),
   });
   if (!appt) return res.status(404).json({ message: "Appointment not found" });
   res.json({ message: "Deleted" });

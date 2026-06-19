@@ -26,6 +26,8 @@ const treatmentSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    // Guard concurrent saves: save() checks __v and throws VersionError on a stale write.
+    optimisticConcurrency: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   }

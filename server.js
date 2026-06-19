@@ -4,6 +4,7 @@ import cors from "cors";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import clientsRoutes from "./routes/clients.js";
+import staffRoutes from "./routes/staff.js";
 import appointmentsRoutes from "./routes/appointments.js";
 import treatmentsRoutes from "./routes/treatments.js";
 import dentistsRoutes from "./routes/dentists.js";
@@ -47,6 +48,7 @@ app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/clients", clientsRoutes);
+app.use("/api/staff", staffRoutes);
 app.use("/api/appointments", appointmentsRoutes);
 app.use("/api/treatments", treatmentsRoutes);
 app.use("/api/dentists", dentistsRoutes);

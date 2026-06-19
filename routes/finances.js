@@ -2,16 +2,16 @@ import express from "express";
 import Treatment from "../models/Treatment.js";
 import Order from "../models/Order.js";
 import Expense from "../models/Expense.js";
-import { protect, requireRole } from "../middleware/auth.js";
+import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.use(protect, requireRole("dentist"));
+router.use(protect, requireRole("dentist", "assistant"));
 
 // GET /api/finances/summary -> income (treatments), expenses (supply orders), trends, outstanding
 router.get("/summary", async (req, res) => {
   try {
-    const dentistId = req.user._id;
+    const dentistId = clinicId(req.user);
 
     // --- Income from treatments (collected = sum of actual payments) ---
     const [income] = await Treatment.aggregate([

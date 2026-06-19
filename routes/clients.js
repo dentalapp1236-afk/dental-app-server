@@ -2,17 +2,17 @@ import express from "express";
 import User from "../models/User.js";
 import Association from "../models/Association.js";
 import { sendMail } from "../utils/mailer.js";
-import { protect, requireRole } from "../middleware/auth.js";
+import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// All routes here require an authenticated dentist
-router.use(protect, requireRole("dentist"));
+// All routes here require authenticated clinic staff (dentist or their assistant)
+router.use(protect, requireRole("dentist", "assistant"));
 
-// GET /api/clients  -> list clients associated with THIS dentist
+// GET /api/clients  -> list clients associated with THIS clinic
 router.get("/", async (req, res) => {
   const { search } = req.query;
-  const filter = { role: "client", dentist: req.user._id };
+  const filter = { role: "client", dentist: clinicId(req.user) };
   if (search) {
     filter.$or = [
       { name: new RegExp(search, "i") },
@@ -45,6 +45,7 @@ router.post("/", async (req, res) => {
       if (phoneExists) return res.status(409).json({ message: "Phone already in use" });
     }
 
+    const owningDentistId = clinicId(req.user);
     const client = await User.create({
       name,
       email: cleanEmail,
@@ -52,17 +53,24 @@ router.post("/", async (req, res) => {
       role: "client",
       phone: trimmedPhone,
       dateOfBirth,
-      dentist: req.user._id,
+      dentist: owningDentistId,
     });
 
-    // Record the (already-approved) association created by the dentist
+    // Record the (already-approved) association created by the clinic
     await Association.create({
       client: client._id,
-      dentist: req.user._id,
+      dentist: owningDentistId,
       status: "approved",
       initiatedBy: "dentist",
       respondedAt: new Date(),
     });
+
+    // The credentials message should name the dentist, even if an assistant created the account.
+    const owner =
+      req.user.role === "assistant"
+        ? await User.findById(owningDentistId).select("name")
+        : req.user;
+    const dentistName = owner?.name || req.user.name;
 
     // Build shareable login credentials and email them to the client
     const loginUrl =
@@ -71,7 +79,7 @@ router.post("/", async (req, res) => {
         .trim()
         .replace(/\/+$/, "") + "/login";
     const shareMessage =
-      `Hi ${name}, Dr. ${req.user.name} created your MyDentalBooking account.\n\n` +
+      `Hi ${name}, Dr. ${dentistName} created your MyDentalBooking account.\n\n` +
       `Login: ${loginUrl}\n` +
       (cleanEmail ? `Email: ${cleanEmail}\n` : `Phone: ${trimmedPhone}\n`) +
       `Password: ${password}\n\n` +
@@ -101,7 +109,11 @@ router.post("/", async (req, res) => {
 
 // GET /api/clients/:id
 router.get("/:id", async (req, res) => {
-  const client = await User.findOne({ _id: req.params.id, role: "client" });
+  const client = await User.findOne({
+    _id: req.params.id,
+    role: "client",
+    dentist: clinicId(req.user),
+  });
   if (!client) return res.status(404).json({ message: "Client not found" });
   res.json(client);
 });
@@ -127,7 +139,7 @@ router.put("/:id", async (req, res) => {
       : { $set: update, $unset: { phone: "" } };
 
     const client = await User.findOneAndUpdate(
-      { _id: req.params.id, role: "client" },
+      { _id: req.params.id, role: "client", dentist: clinicId(req.user) },
       ops,
       { new: true }
     );
@@ -141,7 +153,11 @@ router.put("/:id", async (req, res) => {
 
 // DELETE /api/clients/:id
 router.delete("/:id", async (req, res) => {
-  const client = await User.findOneAndDelete({ _id: req.params.id, role: "client" });
+  const client = await User.findOneAndDelete({
+    _id: req.params.id,
+    role: "client",
+    dentist: clinicId(req.user),
+  });
   if (!client) return res.status(404).json({ message: "Client not found" });
   res.json({ message: "Deleted" });
 });

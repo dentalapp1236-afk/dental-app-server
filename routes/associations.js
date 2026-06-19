@@ -5,7 +5,7 @@ import Association from "../models/Association.js";
 import Notification from "../models/Notification.js";
 import Review from "../models/Review.js";
 import { sendPush } from "../utils/push.js";
-import { protect, requireRole } from "../middleware/auth.js";
+import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 router.use(protect);
@@ -15,6 +15,15 @@ const notify = async (user, type, title, body, data) => {
   const notification = await Notification.create({ user, type, title, body, data });
   sendPush(user, { title, body, url: data?.url || "/" });
   return notification;
+};
+
+// Assistants act on behalf of their dentist — resolve the dentist's display name.
+const dentistNameFor = async (user) => {
+  if (user.role === "assistant") {
+    const d = await User.findById(user.dentist).select("name");
+    return d?.name || "your dentist";
+  }
+  return user.name;
 };
 
 const recomputeRating = async (dentistId) => {
@@ -73,19 +82,20 @@ router.post("/request", requireRole("client"), async (req, res) => {
 });
 
 // GET /api/associations/requests  (dentist) -> pending requests
-router.get("/requests", requireRole("dentist"), async (req, res) => {
-  const requests = await Association.find({ dentist: req.user._id, status: "pending" })
+router.get("/requests", requireRole("dentist", "assistant"), async (req, res) => {
+  const requests = await Association.find({ dentist: clinicId(req.user), status: "pending" })
     .populate("client", "name email phone")
     .sort({ createdAt: -1 });
   res.json(requests);
 });
 
-// POST /api/associations/:id/approve  (dentist)
-router.post("/:id/approve", requireRole("dentist"), async (req, res) => {
+// POST /api/associations/:id/approve  (clinic staff)
+router.post("/:id/approve", requireRole("dentist", "assistant"), async (req, res) => {
   try {
+    const dentistId = clinicId(req.user);
     const association = await Association.findOne({
       _id: req.params.id,
-      dentist: req.user._id,
+      dentist: dentistId,
       status: "pending",
     });
     if (!association) return res.status(404).json({ message: "Request not found" });
@@ -93,14 +103,14 @@ router.post("/:id/approve", requireRole("dentist"), async (req, res) => {
     association.status = "approved";
     association.respondedAt = new Date();
     await association.save();
-    await User.findByIdAndUpdate(association.client, { dentist: req.user._id });
+    await User.findByIdAndUpdate(association.client, { dentist: dentistId });
 
     await notify(
       association.client,
       "association_approved",
       "Request approved",
-      `Dr. ${req.user.name} approved your association request.`,
-      { associationId: association._id, dentistId: req.user._id }
+      `Dr. ${await dentistNameFor(req.user)} approved your association request.`,
+      { associationId: association._id, dentistId }
     );
 
     res.json(association);
@@ -111,11 +121,11 @@ router.post("/:id/approve", requireRole("dentist"), async (req, res) => {
 });
 
 // POST /api/associations/:id/reject  (dentist)
-router.post("/:id/reject", requireRole("dentist"), async (req, res) => {
+router.post("/:id/reject", requireRole("dentist", "assistant"), async (req, res) => {
   try {
     const association = await Association.findOne({
       _id: req.params.id,
-      dentist: req.user._id,
+      dentist: clinicId(req.user),
       status: "pending",
     });
     if (!association) return res.status(404).json({ message: "Request not found" });
@@ -128,7 +138,7 @@ router.post("/:id/reject", requireRole("dentist"), async (req, res) => {
       association.client,
       "association_rejected",
       "Request declined",
-      `Dr. ${req.user.name} declined your association request.`,
+      `Dr. ${await dentistNameFor(req.user)} declined your association request.`,
       { associationId: association._id }
     );
 

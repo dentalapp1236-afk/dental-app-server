@@ -1,19 +1,32 @@
 import express from "express";
 import Treatment from "../models/Treatment.js";
-import { protect } from "../middleware/auth.js";
+import { protect, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 router.use(protect);
 
+const isStaff = (user) => user.role === "dentist" || user.role === "assistant";
+
+// Map Mongoose optimistic-concurrency failures to a 409 so the client can refresh.
+const handleErr = (res, err) => {
+  if (err.name === "VersionError") {
+    return res.status(409).json({
+      message: "This record was just changed by someone else. Refresh and try again.",
+      code: "STALE",
+    });
+  }
+  console.error(err);
+  res.status(500).json({ message: "Server error" });
+};
+
 // GET /api/treatments?client=<id>
-// Dentist: all treatments they recorded (optionally filter by client)
+// Clinic staff: all treatments for their clinic (optionally filter by client)
 // Client: their own treatment history
 router.get("/", async (req, res) => {
   const { client } = req.query;
-  const filter =
-    req.user.role === "dentist"
-      ? { dentist: req.user._id, ...(client ? { client } : {}) }
-      : { client: req.user._id };
+  const filter = isStaff(req.user)
+    ? { dentist: clinicId(req.user), ...(client ? { client } : {}) }
+    : { client: req.user._id };
 
   const treatments = await Treatment.find(filter)
     .populate("client", "name email")
@@ -25,8 +38,8 @@ router.get("/", async (req, res) => {
 // POST /api/treatments (dentist)
 router.post("/", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can add treatments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can add treatments" });
     }
     const {
       client,
@@ -47,7 +60,7 @@ router.post("/", async (req, res) => {
     const payments = deposit > 0 ? [{ amount: deposit, note: "Upfront" }] : [];
 
     const tr = await Treatment.create({
-      dentist: req.user._id,
+      dentist: clinicId(req.user),
       client,
       appointment,
       procedure,
@@ -61,19 +74,24 @@ router.post("/", async (req, res) => {
     });
     res.status(201).json(tr);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    handleErr(res, err);
   }
 });
 
 // PUT /api/treatments/:id  (edit fields; paid:true settles the remaining balance)
 router.put("/:id", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can update treatments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can update treatments" });
     }
-    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
+    if (req.body.version !== undefined && Number(req.body.version) !== tr.__v) {
+      return res.status(409).json({
+        message: "This treatment was just changed by someone else. Refresh and try again.",
+        code: "STALE",
+      });
+    }
 
     const editable = ["procedure", "toothNumber", "diagnosis", "description", "date"];
     for (const f of editable) if (req.body[f] !== undefined) tr[f] = req.body[f];
@@ -88,6 +106,12 @@ router.put("/:id", async (req, res) => {
     await tr.save();
     res.json(tr);
   } catch (err) {
+    if (err.name === "VersionError") {
+      return res.status(409).json({
+        message: "This treatment was just changed by someone else. Refresh and try again.",
+        code: "STALE",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
@@ -96,14 +120,14 @@ router.put("/:id", async (req, res) => {
 // POST /api/treatments/:id/payments  (record a per-visit payment)
 router.post("/:id/payments", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can record payments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can record payments" });
     }
     const amount = Number(req.body.amount);
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: "A positive amount is required" });
     }
-    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
 
     if (amount > tr.balance) {
@@ -117,18 +141,17 @@ router.post("/:id/payments", async (req, res) => {
     await tr.save();
     res.status(201).json(tr);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    handleErr(res, err);
   }
 });
 
 // PUT /api/treatments/:id/payments/:paymentId  (edit a recorded payment)
 router.put("/:id/payments/:paymentId", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can edit payments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can edit payments" });
     }
-    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
     const pay = tr.payments.id(req.params.paymentId);
     if (!pay) return res.status(404).json({ message: "Payment not found" });
@@ -154,18 +177,17 @@ router.put("/:id/payments/:paymentId", async (req, res) => {
     await tr.save();
     res.json(tr);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    handleErr(res, err);
   }
 });
 
 // DELETE /api/treatments/:id/payments/:paymentId  (remove a recorded payment)
 router.delete("/:id/payments/:paymentId", async (req, res) => {
   try {
-    if (req.user.role !== "dentist") {
-      return res.status(403).json({ message: "Only dentists can delete payments" });
+    if (!isStaff(req.user)) {
+      return res.status(403).json({ message: "Only clinic staff can delete payments" });
     }
-    const tr = await Treatment.findOne({ _id: req.params.id, dentist: req.user._id });
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
     const pay = tr.payments.id(req.params.paymentId);
     if (!pay) return res.status(404).json({ message: "Payment not found" });
@@ -175,19 +197,18 @@ router.delete("/:id/payments/:paymentId", async (req, res) => {
     await tr.save();
     res.json(tr);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    handleErr(res, err);
   }
 });
 
 // DELETE /api/treatments/:id
 router.delete("/:id", async (req, res) => {
-  if (req.user.role !== "dentist") {
-    return res.status(403).json({ message: "Only dentists can delete treatments" });
+  if (!isStaff(req.user)) {
+    return res.status(403).json({ message: "Only clinic staff can delete treatments" });
   }
   const tr = await Treatment.findOneAndDelete({
     _id: req.params.id,
-    dentist: req.user._id,
+    dentist: clinicId(req.user),
   });
   if (!tr) return res.status(404).json({ message: "Treatment not found" });
   res.json({ message: "Deleted" });
