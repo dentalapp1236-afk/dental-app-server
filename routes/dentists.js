@@ -91,6 +91,13 @@ router.post("/:id/reviews", protect, requireRole("client"), async (req, res) => 
     const dentist = await User.findOne({ _id: req.params.id, role: "dentist" });
     if (!dentist) return res.status(404).json({ message: "Dentist not found" });
 
+    // Only patients associated with this dentist (approved) may review them.
+    if (String(req.user.dentist || "") !== String(dentist._id)) {
+      return res.status(403).json({
+        message: "You can review this dentist only after they approve your association.",
+      });
+    }
+
     // Upsert: one review per client per dentist
     await Review.findOneAndUpdate(
       { dentist: dentist._id, client: req.user._id },
