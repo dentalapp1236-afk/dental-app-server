@@ -151,6 +151,45 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// POST /api/clients/:id/reset-password  (staff sets a new temporary password for their patient)
+router.post("/:id/reset-password", async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters" });
+    }
+    const client = await User.findOne({
+      _id: req.params.id,
+      role: "client",
+      dentist: clinicId(req.user),
+    });
+    if (!client) return res.status(404).json({ message: "Patient not found" });
+
+    client.password = password; // hashed by the User pre-save hook
+    await client.save();
+
+    const loginUrl =
+      (process.env.CLIENT_ORIGIN || "http://localhost:5173")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "") + "/login";
+    const shareMessage =
+      `Hi ${client.name}, your MyDentalBooking password has been reset.\n\n` +
+      `Login: ${loginUrl}\n` +
+      (client.email ? `Email: ${client.email}\n` : client.phone ? `Phone: ${client.phone}\n` : "") +
+      `Password: ${password}\n\n` +
+      `Please sign in and change your password.`;
+
+    res.json({
+      credentials: { email: client.email || "", phone: client.phone || "", password },
+      shareMessage,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // DELETE /api/clients/:id
 router.delete("/:id", async (req, res) => {
   const client = await User.findOneAndDelete({

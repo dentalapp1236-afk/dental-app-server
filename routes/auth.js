@@ -209,6 +209,28 @@ router.get("/me", protect, async (req, res) => {
   res.json({ user: req.user });
 });
 
+// POST /api/auth/change-password -> change own password (verifies current one)
+router.post("/change-password", protect, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current and new password are required" });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ message: "New password must be at least 8 characters" });
+    }
+    const user = await User.findById(req.user._id);
+    const ok = await user.comparePassword(currentPassword);
+    if (!ok) return res.status(400).json({ message: "Current password is incorrect" });
+    user.password = newPassword; // re-hashed by the pre-save hook
+    await user.save();
+    res.json({ message: "Password updated" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // PUT /api/auth/me -> update own profile (role-aware fields)
 router.put("/me", protect, async (req, res) => {
   try {
