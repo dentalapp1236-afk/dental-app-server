@@ -12,6 +12,9 @@ const signToken = (user) =>
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   });
 
+// The UI shows "Dr. <name>", so strip a leading "Dr"/"Dr." the dentist may have typed.
+const stripDrPrefix = (name = "") => name.replace(/^\s*dr\b\.?\s*/i, "").trim();
+
 // POST /api/auth/register
 router.post("/register", async (req, res) => {
   try {
@@ -69,7 +72,7 @@ router.post("/register", async (req, res) => {
     }
 
     const user = await User.create({
-      name,
+      name: role === "dentist" ? stripDrPrefix(name) : name,
       email,
       password,
       role,
@@ -237,7 +240,7 @@ router.put("/me", protect, async (req, res) => {
     const u = req.user;
     const b = req.body;
 
-    if (b.name != null) u.name = b.name;
+    if (b.name != null) u.name = u.role === "dentist" ? stripDrPrefix(b.name) : b.name;
 
     if (b.phone != null) {
       const trimmed = b.phone.trim();
