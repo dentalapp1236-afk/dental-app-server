@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import Review from "../models/Review.js";
+import Appointment from "../models/Appointment.js";
 import { protect, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -74,6 +75,26 @@ router.get("/:id", async (req, res) => {
       .limit(20);
 
     res.json({ dentist, reviews });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/dentists/:id/booked?from=ISO&to=ISO  -> occupied slot datetimes for a dentist.
+// Public (times only, no patient info) so prospective patients can see availability.
+router.get("/:id/booked", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.json({ slots: [] });
+    const q = { dentist: req.params.id, status: { $in: ["scheduled", "pending"] } };
+    const { from, to } = req.query;
+    if (from || to) {
+      q.date = {};
+      if (from) q.date.$gte = new Date(from);
+      if (to) q.date.$lt = new Date(to);
+    }
+    const appts = await Appointment.find(q).select("date").lean();
+    res.json({ slots: appts.map((a) => a.date) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
