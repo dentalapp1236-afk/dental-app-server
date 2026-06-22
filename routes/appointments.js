@@ -12,6 +12,9 @@ router.use(protect);
 
 const isStaff = (user) => user.role === "dentist" || user.role === "assistant";
 
+// Format an appointment time in the clinic's timezone (server runs in UTC),
+// so notifications/emails show local time, not UTC.
+const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
 const fmtWhen = (d) =>
   new Date(d).toLocaleString("en-GB", {
     day: "numeric",
@@ -20,6 +23,7 @@ const fmtWhen = (d) =>
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: CLINIC_TZ,
   });
 
 // Assistants act on behalf of their dentist — resolve the dentist's display name.

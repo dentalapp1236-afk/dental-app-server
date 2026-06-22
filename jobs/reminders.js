@@ -5,6 +5,8 @@ import { sendMail } from "../utils/mailer.js";
 
 const CHECK_MS = 15 * 60 * 1000; // check every 15 minutes
 
+// Format in the clinic's timezone (server runs in UTC) so reminders show local time.
+const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
 const fmtWhen = (d) =>
   new Date(d).toLocaleString("en-GB", {
     day: "numeric",
@@ -13,6 +15,7 @@ const fmtWhen = (d) =>
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: CLINIC_TZ,
   });
 
 // Send a one-time reminder for scheduled appointments entering the next 24 hours.
