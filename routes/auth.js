@@ -242,9 +242,21 @@ router.put("/me", protect, async (req, res) => {
 
     if (b.name != null) u.name = u.role === "dentist" ? stripDrPrefix(b.name) : b.name;
 
+    if (b.email !== undefined) {
+      const cleanEmail = b.email.trim().toLowerCase() || undefined;
+      if (cleanEmail) {
+        const exists = await User.findOne({ email: cleanEmail, _id: { $ne: u._id } });
+        if (exists) return res.status(409).json({ message: "Email already in use" });
+      }
+      u.email = cleanEmail;
+    }
+
     if (b.phone != null) {
       const trimmed = b.phone.trim();
       if (trimmed) {
+        if (!/^\d{11}$/.test(trimmed)) {
+          return res.status(400).json({ message: "Phone number must be exactly 11 digits." });
+        }
         const exists = await User.findOne({ phone: trimmed, _id: { $ne: u._id } });
         if (exists) return res.status(409).json({ message: "Phone already in use" });
         u.phone = trimmed;

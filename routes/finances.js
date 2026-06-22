@@ -115,6 +115,131 @@ router.get("/summary", async (req, res) => {
   }
 });
 
+// --- Trend analytics: income vs expenses bucketed by day / week / month / year ---
+const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const PERIODS = {
+  day: { unit: "day", count: 14 },
+  week: { unit: "week", count: 8 },
+  month: { unit: "month", count: 6 },
+  year: { unit: "year", count: 5 },
+};
+const pad2 = (n) => String(n).padStart(2, "0");
+const tzParts = (d) => {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: CLINIC_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(d)
+    .reduce((o, x) => ((o[x.type] = x.value), o), {});
+  return { y: +p.year, m: +p.month, d: +p.day };
+};
+
+// The contiguous list of period-start keys (YYYY-MM-DD, clinic-tz) ending now,
+// each with a display label — so the chart shows continuous buckets incl. zeros.
+function buildKeys(period) {
+  const { count } = PERIODS[period];
+  const now = tzParts(new Date());
+  const out = [];
+
+  if (period === "year") {
+    for (let i = count - 1; i >= 0; i--) {
+      const y = now.y - i;
+      out.push({ key: `${y}-01-01`, label: `${y}` });
+    }
+  } else if (period === "month") {
+    let y = now.y;
+    let m = now.m;
+    const tmp = [];
+    for (let i = 0; i < count; i++) {
+      tmp.push({ key: `${y}-${pad2(m)}-01`, label: `${MONTHS[m - 1]} ${y}` });
+      if (--m === 0) { m = 12; y--; }
+    }
+    out.push(...tmp.reverse());
+  } else if (period === "day") {
+    const anchor = Date.UTC(now.y, now.m - 1, now.d);
+    for (let i = count - 1; i >= 0; i--) {
+      const t = new Date(anchor - i * 86400000);
+      out.push({
+        key: `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`,
+        label: `${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}`,
+      });
+    }
+  } else {
+    // week — buckets start on Sunday (matches $dateTrunc default)
+    const anchor = Date.UTC(now.y, now.m - 1, now.d);
+    const weekStart = anchor - new Date(anchor).getUTCDay() * 86400000;
+    for (let i = count - 1; i >= 0; i--) {
+      const t = new Date(weekStart - i * 7 * 86400000);
+      out.push({
+        key: `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`,
+        label: `wk ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}`,
+      });
+    }
+  }
+  return out;
+}
+
+// GET /api/finances/trend?period=day|week|month|year
+router.get("/trend", async (req, res) => {
+  try {
+    const dentistId = clinicId(req.user);
+    const period = PERIODS[req.query.period] ? req.query.period : "month";
+    const { unit } = PERIODS[period];
+
+    // Bucket key = the period's start date (clinic-tz) as YYYY-MM-DD.
+    const keyOf = (dateField) => ({
+      $dateToString: {
+        format: "%Y-%m-%d",
+        timezone: CLINIC_TZ,
+        date: {
+          $dateTrunc: {
+            date: dateField,
+            unit,
+            timezone: CLINIC_TZ,
+            ...(unit === "week" ? { startOfWeek: "sunday" } : {}),
+          },
+        },
+      },
+    });
+
+    const [income, orders, maint] = await Promise.all([
+      Treatment.aggregate([
+        { $match: { dentist: dentistId } },
+        { $unwind: "$payments" },
+        { $group: { _id: keyOf("$payments.date"), amount: { $sum: "$payments.amount" } } },
+      ]),
+      Order.aggregate([
+        { $match: { dentist: dentistId, status: { $ne: "cancelled" } } },
+        { $group: { _id: keyOf("$createdAt"), amount: { $sum: "$total" } } },
+      ]),
+      Expense.aggregate([
+        { $match: { dentist: dentistId } },
+        { $group: { _id: keyOf("$date"), amount: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const incomeMap = new Map(income.map((r) => [r._id, r.amount]));
+    const expenseMap = new Map();
+    for (const r of [...orders, ...maint]) {
+      expenseMap.set(r._id, (expenseMap.get(r._id) || 0) + r.amount);
+    }
+
+    const series = buildKeys(period).map(({ key, label }) => ({
+      label,
+      income: incomeMap.get(key) || 0,
+      expense: expenseMap.get(key) || 0,
+    }));
+
+    res.json({ period, series });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // Sum two month-bucketed aggregates ([{_id:{y,m}, amount}]) into one
 function mergeMonthly(a, b) {
   const map = new Map();

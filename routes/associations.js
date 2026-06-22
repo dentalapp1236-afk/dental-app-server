@@ -5,6 +5,7 @@ import Association from "../models/Association.js";
 import Notification from "../models/Notification.js";
 import Review from "../models/Review.js";
 import { sendPush } from "../utils/push.js";
+import { notifyClinic } from "../utils/notify.js";
 import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -66,13 +67,12 @@ router.post("/request", requireRole("client"), async (req, res) => {
       initiatedBy: "client",
     });
 
-    await notify(
-      dentist._id,
-      "association_request",
-      "New patient request",
-      `${me.name} has requested to associate with your clinic.`,
-      { associationId: association._id, clientId: me._id }
-    );
+    await notifyClinic(dentist._id, {
+      type: "association_request",
+      title: "New patient request",
+      body: `${me.name} has requested to associate with your clinic.`,
+      url: "/clients",
+    });
 
     res.status(201).json(association);
   } catch (err) {

@@ -6,6 +6,7 @@ import User from "../models/User.js";
 import { sendPush } from "../utils/push.js";
 import { sendMail } from "../utils/mailer.js";
 import { protect, clinicId } from "../middleware/auth.js";
+import { notifyClinic } from "../utils/notify.js";
 
 const router = express.Router();
 router.use(protect);
@@ -242,7 +243,7 @@ router.post("/request", async (req, res) => {
     const body = `${req.user.name} requested an appointment on ${when}${
       reason ? ` for ${reason}` : ""
     }.`;
-    await notifyUser(dentistId, {
+    await notifyClinic(dentistId, {
       type: "appointment_requested",
       title: "New appointment request",
       body,
@@ -443,6 +444,7 @@ router.patch("/:id/reschedule", async (req, res) => {
     // Keep the current status — a pending request stays pending (awaiting
     // confirmation) at the new time; a scheduled one stays scheduled.
     appt.date = date;
+    appt.arrivalStatus = "none"; // moved time → clear travel status
     appt.remind24hSent = false; // re-arm reminders for the new time
     appt.remind12hSent = false;
     appt.remind1hSent = false;
@@ -458,25 +460,15 @@ router.patch("/:id/reschedule", async (req, res) => {
         ? `${populated.client.name} changed their requested appointment time to ${when}.`
         : `${populated.client.name} rescheduled their appointment to ${when}.`;
 
-    Notification.create({
-      user: populated.dentist._id,
+    await notifyClinic(populated.dentist._id, {
       type: "appointment_rescheduled",
       title: "Appointment rescheduled",
       body,
-      data: { url: "/appointments", appointmentId: appt._id },
-    }).catch((e) => console.error("notif failed:", e?.message));
-
-    sendPush(populated.dentist._id, { title: "Appointment rescheduled", body, url: "/appointments" });
-
-    if (populated.dentist.email) {
-      const text = `Hi Dr. ${populated.dentist.name},\n\n${body}`;
-      sendMail({
-        to: populated.dentist.email,
-        subject: "Appointment rescheduled — MyDentalBooking",
-        text,
-        html: text.replace(/\n/g, "<br/>"),
-      }).catch((e) => console.error("reschedule email failed:", e?.message));
-    }
+      url: "/appointments",
+      email: populated.dentist.email
+        ? { to: populated.dentist.email, greeting: `Hi Dr. ${populated.dentist.name},\n\n` }
+        : null,
+    });
 
     res.json(populated);
   } catch (err) {
@@ -510,9 +502,54 @@ router.patch("/:id/cancel", async (req, res) => {
       ? `${populated.client.name} withdrew their appointment request for ${when}.`
       : `${populated.client.name} cancelled their appointment on ${when}.`;
 
-    await notifyUser(populated.dentist._id, {
+    await notifyClinic(populated.dentist._id, {
       type: "appointment_cancelled",
       title: "Appointment cancelled",
+      body,
+      url: "/appointments",
+      email: populated.dentist.email
+        ? { to: populated.dentist.email, greeting: `Hi Dr. ${populated.dentist.name},\n\n` }
+        : null,
+    });
+
+    res.json(populated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/appointments/:id/arrival  (patient signals they're on the way / arrived)
+router.patch("/:id/arrival", async (req, res) => {
+  try {
+    if (req.user.role !== "client") {
+      return res.status(403).json({ message: "Only the patient can update arrival status" });
+    }
+    const { status } = req.body;
+    if (!["on_the_way", "arrived"].includes(status)) {
+      return res.status(400).json({ message: "Invalid arrival status" });
+    }
+    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
+    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    if (appt.status !== "scheduled") {
+      return res.status(400).json({ message: "Only confirmed appointments can be updated." });
+    }
+
+    appt.arrivalStatus = status;
+    await appt.save();
+    const populated = await appt.populate([
+      { path: "dentist", select: "name email" },
+      { path: "client", select: "name" },
+    ]);
+
+    const when = fmtWhen(appt.date);
+    const body =
+      status === "arrived"
+        ? `${populated.client.name} has arrived at the clinic for their ${when} appointment.`
+        : `${populated.client.name} is on the way to the clinic (appointment ${when}).`;
+    await notifyClinic(populated.dentist._id, {
+      type: "appointment_arrival",
+      title: status === "arrived" ? "Patient has arrived" : "Patient on the way",
       body,
       url: "/appointments",
       email: populated.dentist.email

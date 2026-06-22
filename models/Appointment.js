@@ -12,6 +12,12 @@ const appointmentSchema = new mongoose.Schema(
       default: "scheduled",
     },
     notes: { type: String },
+    // Patient travel status on the day (notifies the dentist).
+    arrivalStatus: {
+      type: String,
+      enum: ["none", "on_the_way", "arrived"],
+      default: "none",
+    },
     // One-time reminder flags, reset whenever the appointment is (re)scheduled.
     remind24hSent: { type: Boolean, default: false }, // ~24h-before reminder sent
     remind12hSent: { type: Boolean, default: false }, // ~12h-before reminder sent
