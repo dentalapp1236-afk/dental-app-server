@@ -417,6 +417,9 @@ router.patch("/:id/reschedule", async (req, res) => {
 
     const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
     if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    if (!ACTIVE.includes(appt.status)) {
+      return res.status(400).json({ message: "Only active appointments can be rescheduled." });
+    }
 
     if (await slotConflict(appt.dentist, date, appt._id)) {
       return res.status(409).json({
@@ -431,8 +434,9 @@ router.patch("/:id/reschedule", async (req, res) => {
       });
     }
 
+    // Keep the current status — a pending request stays pending (awaiting
+    // confirmation) at the new time; a scheduled one stays scheduled.
     appt.date = date;
-    appt.status = "scheduled";
     appt.reminderSent = false; // re-arm the 24h reminder for the new time
     await appt.save();
 
@@ -441,7 +445,10 @@ router.patch("/:id/reschedule", async (req, res) => {
       { path: "client", select: "name" },
     ]);
     const when = fmtWhen(date);
-    const body = `${populated.client.name} rescheduled their appointment to ${when}.`;
+    const body =
+      appt.status === "pending"
+        ? `${populated.client.name} changed their requested appointment time to ${when}.`
+        : `${populated.client.name} rescheduled their appointment to ${when}.`;
 
     Notification.create({
       user: populated.dentist._id,
@@ -462,6 +469,48 @@ router.patch("/:id/reschedule", async (req, res) => {
         html: text.replace(/\n/g, "<br/>"),
       }).catch((e) => console.error("reschedule email failed:", e?.message));
     }
+
+    res.json(populated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/appointments/:id/cancel  (client cancels their own active appointment)
+router.patch("/:id/cancel", async (req, res) => {
+  try {
+    if (req.user.role !== "client") {
+      return res.status(403).json({ message: "Only the patient can cancel their appointment" });
+    }
+    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
+    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    if (!ACTIVE.includes(appt.status)) {
+      return res.status(400).json({ message: "This appointment can no longer be cancelled." });
+    }
+
+    const wasPending = appt.status === "pending";
+    appt.status = "cancelled";
+    await appt.save();
+
+    const populated = await appt.populate([
+      { path: "dentist", select: "name email" },
+      { path: "client", select: "name" },
+    ]);
+    const when = fmtWhen(appt.date);
+    const body = wasPending
+      ? `${populated.client.name} withdrew their appointment request for ${when}.`
+      : `${populated.client.name} cancelled their appointment on ${when}.`;
+
+    await notifyUser(populated.dentist._id, {
+      type: "appointment_cancelled",
+      title: "Appointment cancelled",
+      body,
+      url: "/appointments",
+      email: populated.dentist.email
+        ? { to: populated.dentist.email, greeting: `Hi Dr. ${populated.dentist.name},\n\n` }
+        : null,
+    });
 
     res.json(populated);
   } catch (err) {
