@@ -282,7 +282,9 @@ router.patch("/:id/confirm", async (req, res) => {
     }
 
     appt.status = "scheduled";
-    appt.reminderSent = false;
+    appt.remind24hSent = false;
+    appt.remind12hSent = false;
+    appt.remind1hSent = false;
     await appt.save();
     const populated = await appt.populate([
       { path: "client", select: "name email phone" },
@@ -441,7 +443,9 @@ router.patch("/:id/reschedule", async (req, res) => {
     // Keep the current status — a pending request stays pending (awaiting
     // confirmation) at the new time; a scheduled one stays scheduled.
     appt.date = date;
-    appt.reminderSent = false; // re-arm the 24h reminder for the new time
+    appt.remind24hSent = false; // re-arm reminders for the new time
+    appt.remind12hSent = false;
+    appt.remind1hSent = false;
     await appt.save();
 
     const populated = await appt.populate([

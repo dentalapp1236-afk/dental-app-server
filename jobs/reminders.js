@@ -18,25 +18,34 @@ const fmtWhen = (d) =>
     timeZone: CLINIC_TZ,
   });
 
-// Send a one-time reminder for scheduled appointments entering the next 24 hours.
-// Returns the number of reminders sent (used by the cron endpoint).
-export async function runRemindersOnce() {
+// Reminder windows: send once when the appointment first falls within each lead time.
+const WINDOWS = [
+  { flag: "remind24hSent", ms: 24 * 60 * 60 * 1000, lead: "in about 24 hours" },
+  { flag: "remind12hSent", ms: 12 * 60 * 60 * 1000, lead: "in about 12 hours" },
+  { flag: "remind1hSent", ms: 60 * 60 * 1000, lead: "in about 1 hour" },
+];
+
+async function sendWindow({ flag, ms, lead }) {
   const now = new Date();
-  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const cutoff = new Date(now.getTime() + ms);
 
   const due = await Appointment.find({
     status: "scheduled",
-    reminderSent: { $ne: true },
-    date: { $gt: now, $lte: in24h },
+    [flag]: { $ne: true },
+    date: { $gt: now, $lte: cutoff },
   })
     .populate("client", "name email")
     .populate("dentist", "name");
 
   for (const appt of due) {
     const c = appt.client;
-    if (!c) continue;
+    if (!c) {
+      appt[flag] = true;
+      await appt.save();
+      continue;
+    }
     const when = fmtWhen(appt.date);
-    const body = `Reminder: your appointment with Dr. ${appt.dentist?.name} is on ${when}.`;
+    const body = `Reminder: your appointment with Dr. ${appt.dentist?.name} is ${lead} (${when}).`;
 
     await Notification.create({
       user: c._id,
@@ -58,11 +67,21 @@ export async function runRemindersOnce() {
       }).catch((e) => console.error("[reminder] email:", e?.message));
     }
 
-    appt.reminderSent = true;
+    appt[flag] = true;
     await appt.save();
   }
-  if (due.length) console.log(`[reminder] sent ${due.length} appointment reminder(s)`);
   return due.length;
+}
+
+// Send the 12-hour and 1-hour reminders for scheduled appointments.
+// Returns the total number of reminders sent (used by the cron endpoint).
+export async function runRemindersOnce() {
+  let total = 0;
+  for (const w of WINDOWS) {
+    total += await sendWindow(w);
+  }
+  if (total) console.log(`[reminder] sent ${total} appointment reminder(s)`);
+  return total;
 }
 
 // In-process timer (works when the server stays awake). A managed cron hitting

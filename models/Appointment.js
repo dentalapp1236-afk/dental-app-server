@@ -12,7 +12,10 @@ const appointmentSchema = new mongoose.Schema(
       default: "scheduled",
     },
     notes: { type: String },
-    reminderSent: { type: Boolean, default: false }, // 24h reminder dispatched
+    // One-time reminder flags, reset whenever the appointment is (re)scheduled.
+    remind24hSent: { type: Boolean, default: false }, // ~24h-before reminder sent
+    remind12hSent: { type: Boolean, default: false }, // ~12h-before reminder sent
+    remind1hSent: { type: Boolean, default: false }, // ~1h-before reminder sent
   },
   { timestamps: true }
 );
