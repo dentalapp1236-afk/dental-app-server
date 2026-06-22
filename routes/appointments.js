@@ -84,7 +84,7 @@ router.get("/", async (req, res) => {
     : { client: req.user._id };
   const appts = await Appointment.find(filter)
     .populate("client", "name email phone")
-    .populate("dentist", "name email")
+    .populate("dentist", "name email clinicName location")
     .sort({ date: -1 });
   res.json(appts);
 });
