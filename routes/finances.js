@@ -197,7 +197,7 @@ function wallToUtc(y, m, d, h = 0, mi = 0) {
     .formatToParts(new Date(guess))
     .reduce((o, x) => ((o[x.type] = x.value), o), {});
   const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
-  return guess - (wall - guess);
+  return new Date(guess - (wall - guess));
 }
 
 // [start, end) instants + label for the given period, `offset` periods back from now.
