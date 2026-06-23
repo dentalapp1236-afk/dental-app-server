@@ -234,34 +234,76 @@ function computeWindow(period, offset) {
 }
 
 // GET /api/finances/period?period=day|week|month|year&offset=N
-// Earned vs spent for a single period (offset periods back from the current one).
+// Collected / Expenses / Outstanding for a single period, each with line-item details.
 router.get("/period", async (req, res) => {
   try {
     const dentistId = clinicId(req.user);
     const period = PERIODS[req.query.period] ? req.query.period : "month";
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const { start, end, label } = computeWindow(period, offset);
+    const inRange = { $gte: start, $lt: end };
 
-    const [inc, ord, mnt] = await Promise.all([
+    const [collectedItems, orderItems, maintItems, outstandingItems] = await Promise.all([
+      // Payments collected within the period
       Treatment.aggregate([
         { $match: { dentist: dentistId } },
         { $unwind: "$payments" },
-        { $match: { "payments.date": { $gte: start, $lt: end } } },
-        { $group: { _id: null, amount: { $sum: "$payments.amount" } } },
+        { $match: { "payments.date": inRange } },
+        { $lookup: { from: "users", localField: "client", foreignField: "_id", as: "c" } },
+        {
+          $project: {
+            _id: 0,
+            date: "$payments.date",
+            amount: "$payments.amount",
+            note: "$payments.note",
+            procedure: 1,
+            client: { $arrayElemAt: ["$c.name", 0] },
+          },
+        },
+        { $sort: { date: -1 } },
       ]),
+      // Supply orders within the period
       Order.aggregate([
-        { $match: { dentist: dentistId, status: { $ne: "cancelled" }, createdAt: { $gte: start, $lt: end } } },
-        { $group: { _id: null, amount: { $sum: "$total" } } },
+        { $match: { dentist: dentistId, status: { $ne: "cancelled" }, createdAt: inRange } },
+        { $project: { _id: 0, date: "$createdAt", title: "Supply order", amount: "$total", kind: "supply" } },
       ]),
+      // Maintenance expenses within the period
       Expense.aggregate([
-        { $match: { dentist: dentistId, date: { $gte: start, $lt: end } } },
-        { $group: { _id: null, amount: { $sum: "$amount" } } },
+        { $match: { dentist: dentistId, date: inRange } },
+        { $project: { _id: 0, date: 1, title: 1, amount: 1, category: 1, kind: "maintenance" } },
+      ]),
+      // Treatments billed within the period that still have a balance
+      Treatment.aggregate([
+        { $match: { dentist: dentistId, date: inRange } },
+        { $addFields: { paidAmount: { $sum: "$payments.amount" } } },
+        { $addFields: { balance: { $subtract: ["$cost", "$paidAmount"] } } },
+        { $match: { balance: { $gt: 0 } } },
+        { $lookup: { from: "users", localField: "client", foreignField: "_id", as: "c" } },
+        {
+          $project: {
+            _id: 1,
+            date: 1,
+            procedure: 1,
+            cost: 1,
+            balance: 1,
+            client: { $arrayElemAt: ["$c.name", 0] },
+          },
+        },
+        { $sort: { date: -1 } },
       ]),
     ]);
 
-    const income = inc[0]?.amount || 0;
-    const expense = (ord[0]?.amount || 0) + (mnt[0]?.amount || 0);
-    res.json({ period, offset, label, income, expense, net: income - expense });
+    const sum = (arr, k) => arr.reduce((s, i) => s + (i[k] || 0), 0);
+    const expenseItems = [...orderItems, ...maintItems].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.json({
+      period,
+      offset,
+      label,
+      collected: { total: sum(collectedItems, "amount"), items: collectedItems },
+      expenses: { total: sum(expenseItems, "amount"), items: expenseItems },
+      outstanding: { total: sum(outstandingItems, "balance"), items: outstandingItems },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
