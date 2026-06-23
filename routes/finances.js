@@ -182,6 +182,92 @@ function buildKeys(period) {
   return out;
 }
 
+// UTC instant whose clinic-tz wall clock is (y, m, d, h, mi) — handles the tz offset.
+function wallToUtc(y, m, d, h = 0, mi = 0) {
+  const guess = Date.UTC(y, m - 1, d, h, mi);
+  const p = new Intl.DateTimeFormat("en-US", {
+    timeZone: CLINIC_TZ,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+    .formatToParts(new Date(guess))
+    .reduce((o, x) => ((o[x.type] = x.value), o), {});
+  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+  return guess - (wall - guess);
+}
+
+// [start, end) instants + label for the given period, `offset` periods back from now.
+function computeWindow(period, offset) {
+  const now = tzParts(new Date());
+  if (period === "year") {
+    const y = now.y - offset;
+    return { start: wallToUtc(y, 1, 1), end: wallToUtc(y + 1, 1, 1), label: `${y}` };
+  }
+  if (period === "month") {
+    const mi = now.y * 12 + (now.m - 1) - offset;
+    const y = Math.floor(mi / 12);
+    const m = (mi % 12) + 1;
+    return { start: wallToUtc(y, m, 1), end: wallToUtc(y, m + 1, 1), label: `${MONTHS[m - 1]} ${y}` };
+  }
+  if (period === "day") {
+    const t = new Date(Date.UTC(now.y, now.m - 1, now.d) - offset * 86400000);
+    const y = t.getUTCFullYear();
+    const m = t.getUTCMonth() + 1;
+    const d = t.getUTCDate();
+    return { start: wallToUtc(y, m, d), end: wallToUtc(y, m, d + 1), label: `${d} ${MONTHS[m - 1]} ${y}` };
+  }
+  // week (Sunday start)
+  const anchor = Date.UTC(now.y, now.m - 1, now.d);
+  const dow = new Date(anchor).getUTCDay();
+  const wsMs = anchor - dow * 86400000 - offset * 7 * 86400000;
+  const ws = new Date(wsMs);
+  const we = new Date(wsMs + 6 * 86400000);
+  return {
+    start: wallToUtc(ws.getUTCFullYear(), ws.getUTCMonth() + 1, ws.getUTCDate()),
+    end: wallToUtc(we.getUTCFullYear(), we.getUTCMonth() + 1, we.getUTCDate() + 1),
+    label: `${ws.getUTCDate()} ${MONTHS[ws.getUTCMonth()]} – ${we.getUTCDate()} ${MONTHS[we.getUTCMonth()]}`,
+  };
+}
+
+// GET /api/finances/period?period=day|week|month|year&offset=N
+// Earned vs spent for a single period (offset periods back from the current one).
+router.get("/period", async (req, res) => {
+  try {
+    const dentistId = clinicId(req.user);
+    const period = PERIODS[req.query.period] ? req.query.period : "month";
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const { start, end, label } = computeWindow(period, offset);
+
+    const [inc, ord, mnt] = await Promise.all([
+      Treatment.aggregate([
+        { $match: { dentist: dentistId } },
+        { $unwind: "$payments" },
+        { $match: { "payments.date": { $gte: start, $lt: end } } },
+        { $group: { _id: null, amount: { $sum: "$payments.amount" } } },
+      ]),
+      Order.aggregate([
+        { $match: { dentist: dentistId, status: { $ne: "cancelled" }, createdAt: { $gte: start, $lt: end } } },
+        { $group: { _id: null, amount: { $sum: "$total" } } },
+      ]),
+      Expense.aggregate([
+        { $match: { dentist: dentistId, date: { $gte: start, $lt: end } } },
+        { $group: { _id: null, amount: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const income = inc[0]?.amount || 0;
+    const expense = (ord[0]?.amount || 0) + (mnt[0]?.amount || 0);
+    res.json({ period, offset, label, income, expense, net: income - expense });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // GET /api/finances/trend?period=day|week|month|year
 router.get("/trend", async (req, res) => {
   try {
