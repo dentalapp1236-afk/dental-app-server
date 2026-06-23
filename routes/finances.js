@@ -256,6 +256,7 @@ router.get("/period", async (req, res) => {
             date: "$payments.date",
             amount: "$payments.amount",
             note: "$payments.note",
+            method: "$payments.method",
             procedure: 1,
             client: { $arrayElemAt: ["$c.name", 0] },
           },

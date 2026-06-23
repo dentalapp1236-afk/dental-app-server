@@ -50,6 +50,7 @@ router.post("/", async (req, res) => {
       description,
       cost,
       upfront,
+      upfrontMethod,
       date,
     } = req.body;
     if (!client || !procedure) {
@@ -57,7 +58,11 @@ router.post("/", async (req, res) => {
     }
     const total = Number(cost) || 0;
     const deposit = Number(upfront) || 0;
-    const payments = deposit > 0 ? [{ amount: deposit, note: "Upfront" }] : [];
+    if (deposit > 0 && !["cash", "online"].includes(upfrontMethod)) {
+      return res.status(400).json({ message: "Select how the upfront payment was collected (cash or online)." });
+    }
+    const payments =
+      deposit > 0 ? [{ amount: deposit, note: "Upfront", method: upfrontMethod }] : [];
 
     const tr = await Treatment.create({
       dentist: clinicId(req.user),
@@ -127,6 +132,10 @@ router.post("/:id/payments", async (req, res) => {
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: "A positive amount is required" });
     }
+    const { method } = req.body;
+    if (!["cash", "online"].includes(method)) {
+      return res.status(400).json({ message: "Select how the payment was collected (cash or online)." });
+    }
     const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
     if (!tr) return res.status(404).json({ message: "Treatment not found" });
 
@@ -136,7 +145,7 @@ router.post("/:id/payments", async (req, res) => {
         .json({ message: `Amount cannot exceed the remaining balance (${tr.balance}).` });
     }
 
-    tr.payments.push({ amount, note: req.body.note, date: req.body.date || new Date() });
+    tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
     res.status(201).json(tr);
@@ -172,6 +181,12 @@ router.put("/:id/payments/:paymentId", async (req, res) => {
     }
     if (req.body.note !== undefined) pay.note = req.body.note;
     if (req.body.date !== undefined) pay.date = req.body.date;
+    if (req.body.method !== undefined) {
+      if (!["cash", "online"].includes(req.body.method)) {
+        return res.status(400).json({ message: "Method must be cash or online." });
+      }
+      pay.method = req.body.method;
+    }
 
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();

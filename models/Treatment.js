@@ -6,6 +6,9 @@ const paymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     date: { type: Date, default: Date.now },
     note: { type: String, trim: true },
+    // How the payment was collected. Optional at schema level so older payments
+    // (and auto-settlements) don't fail validation; enforced in the route on create.
+    method: { type: String, enum: ["cash", "online"] },
   },
   { _id: true }
 );
