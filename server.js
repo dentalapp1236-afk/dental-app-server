@@ -17,6 +17,7 @@ import associationsRoutes from "./routes/associations.js";
 import notificationsRoutes from "./routes/notifications.js";
 import pushRoutes from "./routes/push.js";
 import cronRoutes from "./routes/cron.js";
+import uploadsRoutes from "./routes/uploads.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
 import User from "./models/User.js";
 
@@ -43,7 +44,8 @@ app.use(
   })
 );
 
-app.use(express.json());
+// Raised limit so a cropped avatar data-URL (sent to /api/uploads/avatar) fits.
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
@@ -62,6 +64,7 @@ app.use("/api/associations", associationsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/cron", cronRoutes);
+app.use("/api/uploads", uploadsRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

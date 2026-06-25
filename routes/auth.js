@@ -34,6 +34,7 @@ router.post("/register", async (req, res) => {
       availability,
       latitude,
       longitude,
+      image,
     } = req.body;
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "name, email, password, role are required" });
@@ -59,6 +60,7 @@ router.post("/register", async (req, res) => {
       if (clinicName) dentistFields.clinicName = clinicName;
       if (about) dentistFields.about = about;
       if (specialization) dentistFields.specialization = specialization;
+      if (image) dentistFields.image = image;
       if (yearsOfExperience != null && yearsOfExperience !== "") {
         dentistFields.yearsOfExperience = Number(yearsOfExperience);
       }
@@ -275,6 +277,7 @@ router.put("/me", protect, async (req, res) => {
     }
 
     if (u.role === "dentist") {
+      if (b.image !== undefined) u.image = b.image || undefined;
       if (b.clinicName !== undefined) u.clinicName = b.clinicName;
       if (b.specialization !== undefined) u.specialization = b.specialization;
       if (b.about !== undefined) u.about = b.about;

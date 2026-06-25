@@ -24,6 +24,9 @@ const userSchema = new mongoose.Schema(
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
+    // Profile photo (Cloudinary secure URL) — shown on the dentist's public profile.
+    image: { type: String, trim: true },
+
     // Dentist-only profile fields
     clinicName: { type: String, trim: true },
     about: { type: String, trim: true },
