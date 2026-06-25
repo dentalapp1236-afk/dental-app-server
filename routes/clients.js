@@ -1,10 +1,17 @@
 import express from "express";
+import crypto from "crypto";
 import User from "../models/User.js";
 import Association from "../models/Association.js";
 import { sendMail } from "../utils/mailer.js";
 import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
+
+// Resolve the owning dentist's display name (assistants act on behalf of the dentist).
+const dentistNameFor = async (reqUser, dentistId) =>
+  (reqUser.role === "assistant"
+    ? (await User.findById(dentistId).select("name"))?.name
+    : reqUser.name) || reqUser.name;
 
 // All routes here require authenticated clinic staff (dentist or their assistant)
 router.use(protect, requireRole("dentist", "assistant"));
@@ -28,6 +35,59 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { name, email, password, phone, dateOfBirth } = req.body;
+    const owningDentistId = clinicId(req.user);
+
+    // --- Managed (dependent) patient: a child with no own login; contact the guardian. ---
+    if (req.body.managed) {
+      const gName = req.body.guardianName?.trim();
+      const gPhone = req.body.guardianPhone?.trim();
+      const gEmail = req.body.guardianEmail?.trim().toLowerCase() || undefined;
+      if (!name?.trim()) return res.status(400).json({ message: "Patient name is required" });
+      if (!gName) return res.status(400).json({ message: "Guardian name is required" });
+      if (!/^\d{11}$/.test(gPhone || "")) {
+        return res.status(400).json({ message: "Guardian phone must be exactly 11 digits." });
+      }
+
+      const child = await User.create({
+        name: name.trim(),
+        role: "client",
+        managed: true,
+        guardianName: gName,
+        guardianPhone: gPhone,
+        guardianEmail: gEmail,
+        dateOfBirth,
+        password: crypto.randomBytes(24).toString("hex"), // random → no usable login
+        dentist: owningDentistId,
+      });
+      await Association.create({
+        client: child._id,
+        dentist: owningDentistId,
+        status: "approved",
+        initiatedBy: "dentist",
+        respondedAt: new Date(),
+      });
+
+      const dName = await dentistNameFor(req.user, owningDentistId);
+      const shareMessage =
+        `Hi ${gName}, Dr. ${dName} added ${name.trim()} as a patient at the clinic. ` +
+        `We'll reach you on this number/email about ${name.trim()}'s appointments and reminders.`;
+      if (gEmail) {
+        sendMail({
+          to: gEmail,
+          subject: `${name.trim()} — added at MyDentalBooking`,
+          text: shareMessage,
+          html: shareMessage.replace(/\n/g, "<br/>"),
+        }).catch((e) => console.error("guardian email failed:", e?.message));
+      }
+
+      return res.status(201).json({
+        client: child,
+        managed: true,
+        credentials: { email: gEmail || "", phone: gPhone, password: "" },
+        shareMessage,
+      });
+    }
+
     if (!name || !password) {
       return res.status(400).json({ message: "name and password are required" });
     }
@@ -45,7 +105,6 @@ router.post("/", async (req, res) => {
       if (phoneExists) return res.status(409).json({ message: "Phone already in use" });
     }
 
-    const owningDentistId = clinicId(req.user);
     const client = await User.create({
       name,
       email: cleanEmail,
@@ -122,8 +181,31 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { name, phone, dateOfBirth, address, medicalNotes } = req.body;
-    const trimmedPhone = phone?.trim();
+    const existing = await User.findOne({
+      _id: req.params.id,
+      role: "client",
+      dentist: clinicId(req.user),
+    });
+    if (!existing) return res.status(404).json({ message: "Client not found" });
 
+    // Managed (child) patient: edit name/DOB + guardian contact, no own phone/login.
+    if (existing.managed) {
+      const gName = req.body.guardianName?.trim();
+      const gPhone = req.body.guardianPhone?.trim();
+      if (gPhone && !/^\d{11}$/.test(gPhone)) {
+        return res.status(400).json({ message: "Guardian phone must be exactly 11 digits." });
+      }
+      if (name !== undefined) existing.name = name;
+      if (dateOfBirth !== undefined) existing.dateOfBirth = dateOfBirth || undefined;
+      if (gName !== undefined) existing.guardianName = gName;
+      if (gPhone !== undefined) existing.guardianPhone = gPhone;
+      if (req.body.guardianEmail !== undefined)
+        existing.guardianEmail = req.body.guardianEmail?.trim().toLowerCase() || undefined;
+      await existing.save();
+      return res.json(existing);
+    }
+
+    const trimmedPhone = phone?.trim();
     if (trimmedPhone) {
       const phoneExists = await User.findOne({
         phone: trimmedPhone,

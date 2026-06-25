@@ -64,10 +64,12 @@ const patientDayConflict = async (clientId, date, exceptId) => {
 
 // Notify a user in-app + push + (optionally) email.
 const notifyUser = async (userId, { type, title, body, url, email }) => {
-  Notification.create({ user: userId, type, title, body, data: { url } }).catch((e) =>
-    console.error("notif failed:", e?.message)
-  );
-  sendPush(userId, { title, body, url });
+  if (userId) {
+    Notification.create({ user: userId, type, title, body, data: { url } }).catch((e) =>
+      console.error("notif failed:", e?.message)
+    );
+    sendPush(userId, { title, body, url });
+  }
   if (email?.to) {
     const text = `${email.greeting || ""}${body}`;
     sendMail({ to: email.to, subject: title, text, html: text.replace(/\n/g, "<br/>") }).catch(
@@ -160,39 +162,43 @@ router.post("/", async (req, res) => {
       notes,
     });
     const populated = await appt.populate([
-      { path: "client", select: "name email phone" },
+      { path: "client", select: "name email phone managed guardianName guardianEmail guardianPhone" },
       { path: "dentist", select: "name email" },
     ]);
 
-    // Notify the client: in-app + web push + email; give staff a WhatsApp link
+    // Notify the client (or the guardian, for a managed child) + give staff a WhatsApp link
     const c = populated.client;
     const dName = await dentistNameFor(req.user);
     const when = fmtWhen(date);
-    const body = `Dr. ${dName} scheduled your appointment on ${when}${
+    const whose = c.managed ? `${c.name}'s` : "your";
+    const body = `Dr. ${dName} scheduled ${whose} appointment on ${when}${
       reason ? ` for ${reason}` : ""
     }.`;
 
-    Notification.create({
-      user: c._id,
-      type: "appointment_scheduled",
-      title: "Appointment scheduled",
-      body,
-      data: { url: "/client", appointmentId: appt._id },
-    }).catch((e) => console.error("notif failed:", e?.message));
+    if (!c.managed) {
+      Notification.create({
+        user: c._id,
+        type: "appointment_scheduled",
+        title: "Appointment scheduled",
+        body,
+        data: { url: "/client", appointmentId: appt._id },
+      }).catch((e) => console.error("notif failed:", e?.message));
+      sendPush(c._id, { title: "Appointment scheduled", body, url: "/client" });
+    }
 
-    sendPush(c._id, { title: "Appointment scheduled", body, url: "/client" });
-
-    if (c.email) {
-      const text = `Hi ${c.name},\n\n${body}\n\nClinic: Dr. ${dName}\n\nSee you then!`;
+    const emailTo = c.managed ? c.guardianEmail : c.email;
+    if (emailTo) {
+      const greet = c.managed ? c.guardianName || "there" : c.name;
+      const text = `Hi ${greet},\n\n${body}\n\nClinic: Dr. ${dName}\n\nSee you then!`;
       sendMail({
-        to: c.email,
-        subject: "Your appointment is scheduled — MyDentalBooking",
+        to: emailTo,
+        subject: "Appointment scheduled — MyDentalBooking",
         text,
         html: text.replace(/\n/g, "<br/>"),
       }).catch((e) => console.error("appointment email failed:", e?.message));
     }
 
-    const shareMessage = `Hi ${c.name}, ${body}`;
+    const shareMessage = `Hi ${c.managed ? c.guardianName || "there" : c.name}, ${body}`;
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareMessage)}`;
 
     res.status(201).json({ appointment: populated, shareMessage, whatsappUrl });
@@ -406,7 +412,7 @@ router.put("/:id", async (req, res) => {
       { $set: set, $inc: { __v: 1 } },
       { new: true }
     )
-      .populate("client", "name email phone")
+      .populate("client", "name email phone managed guardianName guardianEmail")
       .populate("dentist", "name email");
     if (!appt) {
       return res.status(409).json({
@@ -415,17 +421,20 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Tell the patient when staff move their appointment to a new time.
+    // Tell the patient (or guardian, for a managed child) when staff move the time.
     if (dateChanged && appt.client?._id && appt.status === "scheduled") {
+      const c = appt.client;
       const dName = await dentistNameFor(req.user);
-      const body = `Dr. ${dName} rescheduled your appointment to ${fmtWhen(appt.date)}.`;
-      await notifyUser(appt.client._id, {
+      const whose = c.managed ? `${c.name}'s` : "your";
+      const body = `Dr. ${dName} rescheduled ${whose} appointment to ${fmtWhen(appt.date)}.`;
+      const emailTo = c.managed ? c.guardianEmail : c.email;
+      await notifyUser(c.managed ? null : c._id, {
         type: "appointment_scheduled",
         title: "Appointment rescheduled",
         body,
         url: "/client",
-        email: appt.client.email
-          ? { to: appt.client.email, greeting: `Hi ${appt.client.name},\n\n` }
+        email: emailTo
+          ? { to: emailTo, greeting: `Hi ${c.managed ? c.guardianName || "there" : c.name},\n\n` }
           : null,
       });
     }

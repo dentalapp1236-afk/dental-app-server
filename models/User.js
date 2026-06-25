@@ -12,6 +12,12 @@ const userSchema = new mongoose.Schema(
     dateOfBirth: { type: Date },
     address: { type: String },
     medicalNotes: { type: String },
+    // Managed (dependent) patient — e.g. a child with no own phone/email/login.
+    // Communication goes to the guardian instead.
+    managed: { type: Boolean, default: false },
+    guardianName: { type: String, trim: true },
+    guardianPhone: { type: String, trim: true }, // not unique (siblings share one)
+    guardianEmail: { type: String, trim: true, lowercase: true },
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 

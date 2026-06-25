@@ -34,7 +34,7 @@ async function sendWindow({ flag, ms, lead }) {
     [flag]: { $ne: true },
     date: { $gt: now, $lte: cutoff },
   })
-    .populate("client", "name email")
+    .populate("client", "name email managed guardianName guardianEmail")
     .populate("dentist", "name");
 
   for (const appt of due) {
@@ -45,22 +45,27 @@ async function sendWindow({ flag, ms, lead }) {
       continue;
     }
     const when = fmtWhen(appt.date);
-    const body = `Reminder: your appointment with Dr. ${appt.dentist?.name} is ${lead} (${when}).`;
+    const who = c.managed ? `${c.name}'s` : "your";
+    const body = `Reminder: ${who} appointment with Dr. ${appt.dentist?.name} is ${lead} (${when}).`;
 
-    await Notification.create({
-      user: c._id,
-      type: "appointment_reminder",
-      title: "Appointment reminder",
-      body,
-      data: { url: "/client", appointmentId: appt._id },
-    }).catch((e) => console.error("[reminder] notif:", e?.message));
+    // Managed (child) patients have no device/login — only email the guardian.
+    if (!c.managed) {
+      await Notification.create({
+        user: c._id,
+        type: "appointment_reminder",
+        title: "Appointment reminder",
+        body,
+        data: { url: "/client", appointmentId: appt._id },
+      }).catch((e) => console.error("[reminder] notif:", e?.message));
+      sendPush(c._id, { title: "Appointment reminder", body, url: "/client" });
+    }
 
-    sendPush(c._id, { title: "Appointment reminder", body, url: "/client" });
-
-    if (c.email) {
-      const text = `Hi ${c.name},\n\n${body}\n\nSee you then!`;
+    const to = c.managed ? c.guardianEmail : c.email;
+    if (to) {
+      const greet = c.managed ? c.guardianName || "there" : c.name;
+      const text = `Hi ${greet},\n\n${body}\n\nSee you then!`;
       sendMail({
-        to: c.email,
+        to,
         subject: "Appointment reminder — MyDentalBooking",
         text,
         html: text.replace(/\n/g, "<br/>"),
