@@ -26,4 +26,17 @@ const appointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Whenever the appointment time changes via a document save(), re-arm the
+// reminders and clear travel status so the patient is reminded for the NEW time.
+// (findOneAndUpdate bypasses this hook, so the PUT route handles that path itself.)
+appointmentSchema.pre("save", function (next) {
+  if (!this.isNew && this.isModified("date")) {
+    this.remind24hSent = false;
+    this.remind12hSent = false;
+    this.remind1hSent = false;
+    this.arrivalStatus = "none";
+  }
+  next();
+});
+
 export default mongoose.model("Appointment", appointmentSchema);

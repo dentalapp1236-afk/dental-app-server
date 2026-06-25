@@ -383,11 +383,22 @@ router.put("/:id", async (req, res) => {
       });
     }
 
+    const dateChanged =
+      date !== undefined && new Date(date).getTime() !== new Date(current.date).getTime();
+
     const set = {};
     if (date !== undefined) set.date = date;
     if (reason !== undefined) set.reason = reason;
     if (notes !== undefined) set.notes = notes;
     if (status !== undefined) set.status = status;
+    // Moving the time re-arms the 24h/12h/1h reminders and clears travel status,
+    // so a rescheduled appointment notifies the patient for its NEW time.
+    if (dateChanged) {
+      set.remind24hSent = false;
+      set.remind12hSent = false;
+      set.remind1hSent = false;
+      set.arrivalStatus = "none";
+    }
 
     // Guard the write with the version we validated, bumping it atomically.
     const appt = await Appointment.findOneAndUpdate(
@@ -403,6 +414,22 @@ router.put("/:id", async (req, res) => {
         code: "STALE",
       });
     }
+
+    // Tell the patient when staff move their appointment to a new time.
+    if (dateChanged && appt.client?._id && appt.status === "scheduled") {
+      const dName = await dentistNameFor(req.user);
+      const body = `Dr. ${dName} rescheduled your appointment to ${fmtWhen(appt.date)}.`;
+      await notifyUser(appt.client._id, {
+        type: "appointment_scheduled",
+        title: "Appointment rescheduled",
+        body,
+        url: "/client",
+        email: appt.client.email
+          ? { to: appt.client.email, greeting: `Hi ${appt.client.name},\n\n` }
+          : null,
+      });
+    }
+
     res.json(appt);
   } catch (err) {
     console.error(err);
