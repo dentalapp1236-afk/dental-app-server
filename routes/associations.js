@@ -153,7 +153,7 @@ router.post("/:id/reject", requireRole("dentist", "assistant"), async (req, res)
 router.get("/me", requireRole("client"), async (req, res) => {
   const me = await User.findById(req.user._id).populate(
     "dentist",
-    "name clinicName specialization rating reviewCount availability"
+    "name clinicName specialization rating reviewCount availability image"
   );
   const pending = await Association.findOne({ client: me._id, status: "pending" }).populate(
     "dentist",
