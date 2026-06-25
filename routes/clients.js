@@ -18,13 +18,18 @@ router.use(protect, requireRole("dentist", "assistant"));
 
 // GET /api/clients  -> list clients associated with THIS clinic
 router.get("/", async (req, res) => {
-  const { search } = req.query;
+  const { search, managed } = req.query;
   const filter = { role: "client", dentist: clinicId(req.user) };
+  // Split adult patients vs managed dependents (children) when requested.
+  if (managed === "true") filter.managed = true;
+  else if (managed === "false") filter.managed = { $ne: true };
   if (search) {
     filter.$or = [
       { name: new RegExp(search, "i") },
       { email: new RegExp(search, "i") },
       { phone: new RegExp(search, "i") },
+      { guardianName: new RegExp(search, "i") },
+      { guardianPhone: new RegExp(search, "i") },
     ];
   }
   const clients = await User.find(filter).sort({ createdAt: -1 });
