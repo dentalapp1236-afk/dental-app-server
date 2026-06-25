@@ -1,5 +1,6 @@
 import express from "express";
 import Treatment from "../models/Treatment.js";
+import User from "../models/User.js";
 import { protect, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -24,9 +25,17 @@ const handleErr = (res, err) => {
 // Client: their own treatment history
 router.get("/", async (req, res) => {
   const { client } = req.query;
-  const filter = isStaff(req.user)
-    ? { dentist: clinicId(req.user), ...(client ? { client } : {}) }
-    : { client: req.user._id };
+  let filter;
+  if (isStaff(req.user)) {
+    filter = { dentist: clinicId(req.user), ...(client ? { client } : {}) };
+  } else if (client && String(client) !== String(req.user._id)) {
+    // A guardian may view a linked dependent's history.
+    const dep = await User.findOne({ _id: client, managed: true, guardian: req.user._id }).select("_id");
+    if (!dep) return res.status(403).json({ message: "Forbidden" });
+    filter = { client: dep._id };
+  } else {
+    filter = { client: req.user._id };
+  }
 
   const treatments = await Treatment.find(filter)
     .populate("client", "name email")

@@ -62,7 +62,26 @@ const patientDayConflict = async (clientId, date, exceptId) => {
   return Appointment.findOne(query);
 };
 
+// A patient owns an appointment if it's theirs, or it's for a dependent they manage.
+const clientOwnsAppt = async (userId, appt) => {
+  if (String(appt.client) === String(userId)) return true;
+  return !!(await User.exists({ _id: appt.client, managed: true, guardian: userId }));
+};
+
 // Notify a user in-app + push + (optionally) email.
+// Where a patient's notification should go. For a managed dependent, route to the
+// linked guardian's account (in-app + push) and the guardian's email.
+const clientNotifyTarget = (c) => ({
+  userId: c.managed ? c.guardian || null : c._id,
+  email: c.managed
+    ? c.guardianEmail
+      ? { to: c.guardianEmail, greeting: `Hi ${c.guardianName || "there"},\n\n` }
+      : null
+    : c.email
+    ? { to: c.email, greeting: `Hi ${c.name},\n\n` }
+    : null,
+});
+
 const notifyUser = async (userId, { type, title, body, url, email }) => {
   if (userId) {
     Notification.create({ user: userId, type, title, body, data: { url } }).catch((e) =>
@@ -82,9 +101,14 @@ const notifyUser = async (userId, { type, title, body, url, email }) => {
 // Dentist: appointments where they are the dentist
 // Client: appointments where they are the client
 router.get("/", async (req, res) => {
-  const filter = isStaff(req.user)
-    ? { dentist: clinicId(req.user) }
-    : { client: req.user._id };
+  let filter;
+  if (isStaff(req.user)) {
+    filter = { dentist: clinicId(req.user) };
+  } else {
+    // A patient sees their own appointments plus those of their dependents.
+    const deps = await User.find({ managed: true, guardian: req.user._id }).select("_id");
+    filter = { client: { $in: [req.user._id, ...deps.map((d) => d._id)] } };
+  }
   const appts = await Appointment.find(filter)
     .populate("client", "name email phone")
     .populate("dentist", "name email clinicName location")
@@ -162,11 +186,11 @@ router.post("/", async (req, res) => {
       notes,
     });
     const populated = await appt.populate([
-      { path: "client", select: "name email phone managed guardianName guardianEmail guardianPhone" },
+      { path: "client", select: "name email phone managed guardian guardianName guardianEmail guardianPhone" },
       { path: "dentist", select: "name email" },
     ]);
 
-    // Notify the client (or the guardian, for a managed child) + give staff a WhatsApp link
+    // Notify the patient (or the guardian, for a managed child) + give staff a WhatsApp link
     const c = populated.client;
     const dName = await dentistNameFor(req.user);
     const when = fmtWhen(date);
@@ -174,29 +198,14 @@ router.post("/", async (req, res) => {
     const body = `Dr. ${dName} scheduled ${whose} appointment on ${when}${
       reason ? ` for ${reason}` : ""
     }.`;
-
-    if (!c.managed) {
-      Notification.create({
-        user: c._id,
-        type: "appointment_scheduled",
-        title: "Appointment scheduled",
-        body,
-        data: { url: "/client", appointmentId: appt._id },
-      }).catch((e) => console.error("notif failed:", e?.message));
-      sendPush(c._id, { title: "Appointment scheduled", body, url: "/client" });
-    }
-
-    const emailTo = c.managed ? c.guardianEmail : c.email;
-    if (emailTo) {
-      const greet = c.managed ? c.guardianName || "there" : c.name;
-      const text = `Hi ${greet},\n\n${body}\n\nClinic: Dr. ${dName}\n\nSee you then!`;
-      sendMail({
-        to: emailTo,
-        subject: "Appointment scheduled — MyDentalBooking",
-        text,
-        html: text.replace(/\n/g, "<br/>"),
-      }).catch((e) => console.error("appointment email failed:", e?.message));
-    }
+    const t = clientNotifyTarget(c);
+    await notifyUser(t.userId, {
+      type: "appointment_scheduled",
+      title: "Appointment scheduled",
+      body,
+      url: "/client",
+      email: t.email,
+    });
 
     const shareMessage = `Hi ${c.managed ? c.guardianName || "there" : c.name}, ${body}`;
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareMessage)}`;
@@ -214,31 +223,47 @@ router.post("/request", async (req, res) => {
     if (req.user.role !== "client") {
       return res.status(403).json({ message: "Only patients can request appointments" });
     }
-    const dentistId = req.user.dentist;
-    if (!dentistId) {
-      return res.status(400).json({ message: "You are not associated with a dentist yet." });
-    }
     const { date, reason } = req.body;
     if (!date) return res.status(400).json({ message: "Please pick a time slot." });
     if (new Date(date).getTime() < Date.now()) {
       return res.status(400).json({ message: "Appointment cannot be in the past" });
     }
+
+    // Booking for self, or for a linked dependent (req.body.for = dependent id).
+    let patientId = req.user._id;
+    let patientName = req.user.name;
+    let dentistId = req.user.dentist;
+    if (req.body.for && String(req.body.for) !== String(req.user._id)) {
+      const dep = await User.findOne({
+        _id: req.body.for,
+        managed: true,
+        guardian: req.user._id,
+      });
+      if (!dep) return res.status(403).json({ message: "Not your dependent" });
+      patientId = dep._id;
+      patientName = dep.name;
+      dentistId = dep.dentist;
+    }
+    if (!dentistId) {
+      return res.status(400).json({ message: "You are not associated with a dentist yet." });
+    }
+
     if (await slotConflict(dentistId, date)) {
       return res.status(409).json({
         message: "That slot was just taken. Please pick another time.",
         code: "SLOT_TAKEN",
       });
     }
-    if (await patientDayConflict(req.user._id, date)) {
+    if (await patientDayConflict(patientId, date)) {
       return res.status(409).json({
-        message: "You already have an appointment on this day.",
+        message: `${patientName} already has an appointment on this day.`,
         code: "PATIENT_DAY_TAKEN",
       });
     }
 
     const appt = await Appointment.create({
       dentist: dentistId,
-      client: req.user._id,
+      client: patientId,
       date,
       reason,
       status: "pending",
@@ -246,7 +271,7 @@ router.post("/request", async (req, res) => {
 
     const when = fmtWhen(date);
     const dentist = await User.findById(dentistId).select("name email");
-    const body = `${req.user.name} requested an appointment on ${when}${
+    const body = `${patientName} requested an appointment on ${when}${
       reason ? ` for ${reason}` : ""
     }.`;
     await notifyClinic(dentistId, {
@@ -294,21 +319,21 @@ router.patch("/:id/confirm", async (req, res) => {
     appt.remind1hSent = false;
     await appt.save();
     const populated = await appt.populate([
-      { path: "client", select: "name email phone" },
+      { path: "client", select: "name email phone managed guardian guardianName guardianEmail" },
       { path: "dentist", select: "name email" },
     ]);
 
+    const c = populated.client;
     const dName = await dentistNameFor(req.user);
     const when = fmtWhen(appt.date);
-    const body = `Dr. ${dName} confirmed your appointment on ${when}.`;
-    await notifyUser(populated.client._id, {
+    const whose = c.managed ? `${c.name}'s` : "your";
+    const t = clientNotifyTarget(c);
+    await notifyUser(t.userId, {
       type: "appointment_confirmed",
       title: "Appointment confirmed",
-      body,
+      body: `Dr. ${dName} confirmed ${whose} appointment on ${when}.`,
       url: "/client",
-      email: populated.client.email
-        ? { to: populated.client.email, greeting: `Hi ${populated.client.name},\n\n` }
-        : null,
+      email: t.email,
     });
 
     res.json(populated);
@@ -331,21 +356,21 @@ router.patch("/:id/decline", async (req, res) => {
     appt.status = "cancelled";
     await appt.save();
     const populated = await appt.populate([
-      { path: "client", select: "name email phone" },
+      { path: "client", select: "name email phone managed guardian guardianName guardianEmail" },
       { path: "dentist", select: "name email" },
     ]);
 
+    const c = populated.client;
     const dName = await dentistNameFor(req.user);
     const when = fmtWhen(appt.date);
-    const body = `Dr. ${dName} could not confirm your requested appointment on ${when}. Please pick another time.`;
-    await notifyUser(populated.client._id, {
+    const whose = c.managed ? `${c.name}'s` : "your";
+    const t = clientNotifyTarget(c);
+    await notifyUser(t.userId, {
       type: "appointment_declined",
       title: "Appointment request declined",
-      body,
+      body: `Dr. ${dName} could not confirm ${whose} requested appointment on ${when}. Please pick another time.`,
       url: "/client",
-      email: populated.client.email
-        ? { to: populated.client.email, greeting: `Hi ${populated.client.name},\n\n` }
-        : null,
+      email: t.email,
     });
 
     res.json(populated);
@@ -412,7 +437,7 @@ router.put("/:id", async (req, res) => {
       { $set: set, $inc: { __v: 1 } },
       { new: true }
     )
-      .populate("client", "name email phone managed guardianName guardianEmail")
+      .populate("client", "name email phone managed guardian guardianName guardianEmail")
       .populate("dentist", "name email");
     if (!appt) {
       return res.status(409).json({
@@ -422,20 +447,17 @@ router.put("/:id", async (req, res) => {
     }
 
     // Tell the patient (or guardian, for a managed child) when staff move the time.
-    if (dateChanged && appt.client?._id && appt.status === "scheduled") {
+    if (dateChanged && appt.status === "scheduled") {
       const c = appt.client;
       const dName = await dentistNameFor(req.user);
       const whose = c.managed ? `${c.name}'s` : "your";
-      const body = `Dr. ${dName} rescheduled ${whose} appointment to ${fmtWhen(appt.date)}.`;
-      const emailTo = c.managed ? c.guardianEmail : c.email;
-      await notifyUser(c.managed ? null : c._id, {
+      const t = clientNotifyTarget(c);
+      await notifyUser(t.userId, {
         type: "appointment_scheduled",
         title: "Appointment rescheduled",
-        body,
+        body: `Dr. ${dName} rescheduled ${whose} appointment to ${fmtWhen(appt.date)}.`,
         url: "/client",
-        email: emailTo
-          ? { to: emailTo, greeting: `Hi ${c.managed ? c.guardianName || "there" : c.name},\n\n` }
-          : null,
+        email: t.email,
       });
     }
 
@@ -458,8 +480,10 @@ router.patch("/:id/reschedule", async (req, res) => {
       return res.status(400).json({ message: "Appointment cannot be in the past" });
     }
 
-    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
-    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    const appt = await Appointment.findById(req.params.id);
+    if (!appt || !(await clientOwnsAppt(req.user._id, appt))) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
     if (!ACTIVE.includes(appt.status)) {
       return res.status(400).json({ message: "Only active appointments can be rescheduled." });
     }
@@ -519,8 +543,10 @@ router.patch("/:id/cancel", async (req, res) => {
     if (req.user.role !== "client") {
       return res.status(403).json({ message: "Only the patient can cancel their appointment" });
     }
-    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
-    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    const appt = await Appointment.findById(req.params.id);
+    if (!appt || !(await clientOwnsAppt(req.user._id, appt))) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
     if (!ACTIVE.includes(appt.status)) {
       return res.status(400).json({ message: "This appointment can no longer be cancelled." });
     }
@@ -565,8 +591,10 @@ router.patch("/:id/arrival", async (req, res) => {
     if (!["on_the_way", "arrived"].includes(status)) {
       return res.status(400).json({ message: "Invalid arrival status" });
     }
-    const appt = await Appointment.findOne({ _id: req.params.id, client: req.user._id });
-    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+    const appt = await Appointment.findById(req.params.id);
+    if (!appt || !(await clientOwnsAppt(req.user._id, appt))) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
     if (appt.status !== "scheduled") {
       return res.status(400).json({ message: "Only confirmed appointments can be updated." });
     }

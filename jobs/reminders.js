@@ -34,7 +34,7 @@ async function sendWindow({ flag, ms, lead }) {
     [flag]: { $ne: true },
     date: { $gt: now, $lte: cutoff },
   })
-    .populate("client", "name email managed guardianName guardianEmail")
+    .populate("client", "name email managed guardian guardianName guardianEmail")
     .populate("dentist", "name");
 
   for (const appt of due) {
@@ -48,16 +48,18 @@ async function sendWindow({ flag, ms, lead }) {
     const who = c.managed ? `${c.name}'s` : "your";
     const body = `Reminder: ${who} appointment with Dr. ${appt.dentist?.name} is ${lead} (${when}).`;
 
-    // Managed (child) patients have no device/login — only email the guardian.
-    if (!c.managed) {
+    // For a managed dependent, notify the linked guardian's account (if any);
+    // otherwise the patient. Always email the right contact.
+    const targetUser = c.managed ? c.guardian : c._id;
+    if (targetUser) {
       await Notification.create({
-        user: c._id,
+        user: targetUser,
         type: "appointment_reminder",
         title: "Appointment reminder",
         body,
         data: { url: "/client", appointmentId: appt._id },
       }).catch((e) => console.error("[reminder] notif:", e?.message));
-      sendPush(c._id, { title: "Appointment reminder", body, url: "/client" });
+      sendPush(targetUser, { title: "Appointment reminder", body, url: "/client" });
     }
 
     const to = c.managed ? c.guardianEmail : c.email;

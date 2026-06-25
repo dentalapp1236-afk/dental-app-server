@@ -18,6 +18,9 @@ const userSchema = new mongoose.Schema(
     guardianName: { type: String, trim: true },
     guardianPhone: { type: String, trim: true }, // not unique (siblings share one)
     guardianEmail: { type: String, trim: true, lowercase: true },
+    // When the guardian is a registered patient, link to their account so they
+    // can view/manage this dependent and receive its notifications in-app/push.
+    guardian: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
