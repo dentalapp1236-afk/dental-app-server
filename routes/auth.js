@@ -276,8 +276,12 @@ router.put("/me", protect, async (req, res) => {
       if (b.companyName !== undefined) u.companyName = b.companyName;
     }
 
+    // Profile photo — dentists and assistants can set/clear their own.
+    if (b.image !== undefined && (u.role === "dentist" || u.role === "assistant")) {
+      u.image = b.image || undefined;
+    }
+
     if (u.role === "dentist") {
-      if (b.image !== undefined) u.image = b.image || undefined;
       if (b.clinicName !== undefined) u.clinicName = b.clinicName;
       if (b.specialization !== undefined) u.specialization = b.specialization;
       if (b.about !== undefined) u.about = b.about;
