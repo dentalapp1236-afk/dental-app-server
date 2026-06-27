@@ -13,6 +13,16 @@ const paymentSchema = new mongoose.Schema(
   { _id: true }
 );
 
+// A patient-reported problem / recall on a past treatment (e.g. pain days later).
+const followUpSchema = new mongoose.Schema(
+  {
+    message: { type: String, trim: true, required: true },
+    status: { type: String, enum: ["open", "resolved"], default: "open" },
+    resolvedAt: { type: Date },
+  },
+  { _id: true, timestamps: { createdAt: true, updatedAt: false } }
+);
+
 const treatmentSchema = new mongoose.Schema(
   {
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -26,6 +36,8 @@ const treatmentSchema = new mongoose.Schema(
     payments: { type: [paymentSchema], default: [] }, // upfront + per-visit charges
     paid: { type: Boolean, default: false }, // derived: balance <= 0
     date: { type: Date, default: Date.now },
+    // Patient-initiated recalls/problem reports about this treatment.
+    followUps: { type: [followUpSchema], default: [] },
   },
   {
     timestamps: true,

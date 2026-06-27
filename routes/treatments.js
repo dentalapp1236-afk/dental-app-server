@@ -2,6 +2,7 @@ import express from "express";
 import Treatment from "../models/Treatment.js";
 import User from "../models/User.js";
 import { protect, clinicId } from "../middleware/auth.js";
+import { notifyClinic } from "../utils/notify.js";
 
 const router = express.Router();
 router.use(protect);
@@ -42,6 +43,62 @@ router.get("/", async (req, res) => {
     .populate("dentist", "name email")
     .sort({ date: -1 });
   res.json(treatments);
+});
+
+// POST /api/treatments/:id/follow-up  (patient/guardian) -> report a problem / recall.
+// Logs the issue on the treatment and alerts the clinic (in-app + push).
+router.post("/:id/follow-up", async (req, res) => {
+  try {
+    if (isStaff(req.user)) return res.status(403).json({ message: "Patients only" });
+    const message = (req.body.message || "").toString().trim();
+    if (!message) return res.status(400).json({ message: "Please describe the issue." });
+
+    const tr = await Treatment.findById(req.params.id);
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+
+    // Ownership: the patient themselves, or the guardian of a managed dependent.
+    let patientName = req.user.name;
+    if (String(tr.client) !== String(req.user._id)) {
+      const dep = await User.findOne({
+        _id: tr.client,
+        managed: true,
+        guardian: req.user._id,
+      }).select("name");
+      if (!dep) return res.status(403).json({ message: "Forbidden" });
+      patientName = dep.name;
+    }
+
+    tr.followUps.push({ message, status: "open" });
+    await tr.save();
+
+    await notifyClinic(tr.dentist, {
+      type: "treatment_followup",
+      title: `${patientName} reported an issue`,
+      body: `${tr.procedure}: ${message}`,
+      url: `/clients/${tr.client}`,
+    });
+
+    res.status(201).json(tr);
+  } catch (err) {
+    handleErr(res, err);
+  }
+});
+
+// PUT /api/treatments/:id/follow-up/:fid/resolve  (staff) -> mark a report handled.
+router.put("/:id/follow-up/:fid/resolve", async (req, res) => {
+  try {
+    if (!isStaff(req.user)) return res.status(403).json({ message: "Staff only" });
+    const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
+    if (!tr) return res.status(404).json({ message: "Treatment not found" });
+    const f = tr.followUps.id(req.params.fid);
+    if (!f) return res.status(404).json({ message: "Report not found" });
+    f.status = "resolved";
+    f.resolvedAt = new Date();
+    await tr.save();
+    res.json(tr);
+  } catch (err) {
+    handleErr(res, err);
+  }
 });
 
 // POST /api/treatments (dentist)
