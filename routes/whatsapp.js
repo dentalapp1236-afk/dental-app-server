@@ -35,6 +35,21 @@ router.post("/webhook", async (req, res) => {
     const entries = req.body?.entry || [];
     for (const entry of entries) {
       for (const change of entry.changes || []) {
+        // Delivery status updates (sent / delivered / read / failed). Log failures
+        // with their exact reason so undelivered messages can be diagnosed.
+        for (const st of change.value?.statuses || []) {
+          if (st.status === "failed") {
+            const e = st.errors?.[0] || {};
+            console.error(
+              `[whatsapp] message ${st.id} to ${st.recipient_id} FAILED — ` +
+                `code=${e.code} title="${e.title || ""}" ` +
+                `detail="${e.error_data?.details || e.message || ""}"`
+            );
+          } else {
+            console.log(`[whatsapp] message ${st.id} to ${st.recipient_id} status=${st.status}`);
+          }
+        }
+
         for (const msg of change.value?.messages || []) {
           const from = msg.from; // wa_id, e.g. 923001234567
           const local = waToLocal(from);
