@@ -60,6 +60,7 @@ router.post("/register", async (req, res) => {
       if (clinicName) dentistFields.clinicName = clinicName;
       if (about) dentistFields.about = about;
       if (specialization) dentistFields.specialization = specialization;
+      if (image) dentistFields.image = image;
       if (yearsOfExperience != null && yearsOfExperience !== "") {
         dentistFields.yearsOfExperience = Number(yearsOfExperience);
       }
@@ -80,7 +81,6 @@ router.post("/register", async (req, res) => {
       phone: trimmedPhone || undefined,
       dateOfBirth,
       address,
-      image: image || undefined,
       ...dentistFields,
     });
     const token = signToken(user);
@@ -303,8 +303,10 @@ router.put("/me", protect, async (req, res) => {
       if (b.companyName !== undefined) u.companyName = b.companyName;
     }
 
-    // Profile photo — any user can set/clear their own.
-    if (b.image !== undefined) u.image = b.image || undefined;
+    // Profile photo — only dentists and assistants can set/clear their own.
+    if (b.image !== undefined && (u.role === "dentist" || u.role === "assistant")) {
+      u.image = b.image || undefined;
+    }
 
     if (u.role === "dentist") {
       if (b.clinicName !== undefined) u.clinicName = b.clinicName;
