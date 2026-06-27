@@ -3,6 +3,7 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import Association from "../models/Association.js";
 import { sendMail } from "../utils/mailer.js";
+import { sendTemplate, whatsappConfigured, TEMPLATES } from "../utils/whatsapp.js";
 import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -157,6 +158,15 @@ router.post("/", async (req, res) => {
         text: shareMessage,
         html: shareMessage.replace(/\n/g, "<br/>"),
       }).catch((e) => console.error("creds email failed:", e?.message));
+    }
+
+    // Also send a WhatsApp welcome (approved template) when we have a number.
+    if (whatsappConfigured() && trimmedPhone) {
+      sendTemplate({
+        to: trimmedPhone,
+        template: TEMPLATES.welcome,
+        bodyParams: [name, dentistName, password],
+      }).catch((e) => console.error("welcome whatsapp failed:", e?.message));
     }
 
     // Return the client plus credentials so the dentist can copy / share via WhatsApp

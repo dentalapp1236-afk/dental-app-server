@@ -118,15 +118,50 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password  -> email a time-limited reset link
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// POST /api/auth/forgot-password  -> email a time-limited reset link.
+// Accepts `identifier` (email OR phone). If the matched account has no email on
+// file (e.g. a phone-only patient), the client is asked to supply one via
+// `newEmail`, which we save to the account and use to send the link.
 router.post("/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
+    const { identifier, email, newEmail } = req.body;
+    const raw = (identifier ?? email ?? "").toString().trim();
+    if (!raw) return res.status(400).json({ message: "Email or phone is required" });
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-    // If the user exists, generate a token, store its hash, and email the link.
+    // Email lookups contain "@"; otherwise treat it as a phone number.
+    const byEmail = raw.includes("@");
+    const user = byEmail
+      ? await User.findOne({ email: raw.toLowerCase() })
+      : await User.findOne({ phone: raw.replace(/\D/g, "") });
+
+    const generic = "If that account exists, a reset link has been sent.";
+
     if (user) {
+      let to = user.email;
+
+      // Phone-only account with no email: collect one, save it, send there.
+      if (!to) {
+        const provided = (newEmail || "").toString().trim().toLowerCase();
+        if (!provided) {
+          // Signal the client to ask for an email for this account.
+          return res.json({
+            needEmail: true,
+            message: "We don't have an email on file for this account. Enter one to receive your reset link.",
+          });
+        }
+        if (!EMAIL_RE.test(provided)) {
+          return res.status(400).json({ message: "Enter a valid email address." });
+        }
+        const clash = await User.findOne({ email: provided, _id: { $ne: user._id } });
+        if (clash) {
+          return res.status(409).json({ message: "That email is already used by another account." });
+        }
+        user.email = provided; // persisted with the token save below
+        to = provided;
+      }
+
       const token = crypto.randomBytes(32).toString("hex");
       user.resetTokenHash = crypto.createHash("sha256").update(token).digest("hex");
       user.resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
@@ -138,7 +173,7 @@ router.post("/forgot-password", async (req, res) => {
         .replace(/\/+$/, "");
       const link = `${base}/reset-password?token=${token}`;
       const result = await sendMail({
-        to: user.email,
+        to,
         subject: "Reset your MyDentalBooking password",
         text: `We received a request to reset your password.\n\nUse this link within 1 hour:\n${link}\n\nIf you didn't request this, you can ignore this email.`,
         html: `<p>We received a request to reset your password.</p>
@@ -147,30 +182,22 @@ router.post("/forgot-password", async (req, res) => {
                <p>If you didn't request this, you can ignore this email.</p>`,
       });
       if (!result.delivered) {
-        console.error(
-          `[forgot-password] reset email to ${user.email} was NOT delivered: ${result.reason}`
-        );
+        console.error(`[forgot-password] reset email to ${to} was NOT delivered: ${result.reason}`);
       }
       // Opt-in diagnostics: set MAIL_DEBUG=true to learn whether the email
-      // actually went out (and why not). Off by default so we don't leak which
-      // addresses are registered.
+      // actually went out (and why not).
       if (process.env.MAIL_DEBUG === "true") {
         return res.json({
-          message: "If that email is registered, a reset link has been sent.",
+          message: generic,
           debug: { found: true, delivered: result.delivered, reason: result.reason || null },
         });
       }
     } else if (process.env.MAIL_DEBUG === "true") {
-      return res.json({
-        message: "If that email is registered, a reset link has been sent.",
-        debug: { found: false },
-      });
+      return res.json({ message: generic, debug: { found: false } });
     }
 
-    // Always return a generic response so we don't reveal which emails exist
-    res.json({
-      message: "If that email is registered, a reset link has been sent.",
-    });
+    // Generic response (when an account was found and emailed, or not found at all).
+    res.json({ message: generic });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

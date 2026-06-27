@@ -27,6 +27,10 @@ const userSchema = new mongoose.Schema(
     // Profile photo (Cloudinary secure URL) — shown on the dentist's public profile.
     image: { type: String, trim: true },
 
+    // Last time this patient messaged us on WhatsApp — defines the 24h window in
+    // which free-form (non-template) WhatsApp messages are allowed.
+    waLastInboundAt: { type: Date },
+
     // Dentist-only profile fields
     clinicName: { type: String, trim: true },
     about: { type: String, trim: true },
