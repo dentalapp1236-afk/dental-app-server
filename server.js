@@ -1,6 +1,9 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import mongoSanitize from "express-mongo-sanitize";
+import { apiLimiter, loginLimiter, forgotLimiter, uploadLimiter } from "./middleware/rateLimit.js";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import clientsRoutes from "./routes/clients.js";
@@ -22,6 +25,19 @@ import { startAppointmentReminders } from "./jobs/reminders.js";
 import User from "./models/User.js";
 
 const app = express();
+
+// Behind Render's proxy — needed so req.ip is the real client (rate limiting).
+app.set("trust proxy", 1);
+
+// Security headers. CSP is disabled here (this API serves JSON, not HTML — CSP is
+// enforced on the client app), and CORP is set to cross-origin so the SPA on its
+// own domain can read responses.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 
 // Allowed origins: comma-separated CLIENT_ORIGIN, trailing slashes stripped.
 // Empty -> allow all (dev). Tolerates www/non-www and trailing-slash mismatches.
@@ -47,7 +63,18 @@ app.use(
 // Raised limit so a cropped avatar data-URL (sent to /api/uploads/avatar) fits.
 app.use(express.json({ limit: "8mb" }));
 
+// Strip MongoDB operators ($, .) from inputs to block NoSQL-injection.
+app.use(mongoSanitize());
+
+// Health check stays unthrottled (Render pings it).
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+// Generous catch-all limiter, then tighter limits on sensitive endpoints.
+app.use("/api", apiLimiter);
+app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/forgot-password", forgotLimiter);
+app.use("/api/auth/reset-password", forgotLimiter);
+app.use("/api/uploads/avatar", uploadLimiter);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/clients", clientsRoutes);
