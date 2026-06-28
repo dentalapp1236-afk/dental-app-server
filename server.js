@@ -21,6 +21,7 @@ import notificationsRoutes from "./routes/notifications.js";
 import pushRoutes from "./routes/push.js";
 import cronRoutes from "./routes/cron.js";
 import uploadsRoutes from "./routes/uploads.js";
+import adminRoutes from "./routes/admin.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
 import User from "./models/User.js";
 
@@ -92,6 +93,7 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/cron", cronRoutes);
 app.use("/api/uploads", uploadsRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

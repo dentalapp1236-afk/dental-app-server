@@ -2,10 +2,25 @@ import express from "express";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import LoginEvent from "../models/LoginEvent.js";
 import { protect } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
 
 const router = express.Router();
+
+// Best-effort audit log of a login attempt (never blocks/fails the request).
+const logLogin = (req, { user, identifier, success, reason }) => {
+  LoginEvent.create({
+    user: user?._id,
+    name: user?.name,
+    identifier,
+    role: user?.role,
+    success,
+    reason,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  }).catch((e) => console.error("[loginEvent]", e?.message));
+};
 
 const signToken = (user) =>
   jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
@@ -105,11 +120,18 @@ router.post("/login", async (req, res) => {
       ? { email: id.toLowerCase() }
       : { phone: id };
     const user = await User.findOne(query);
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    if (!user) {
+      logLogin(req, { identifier: id, success: false, reason: "no such user" });
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     const ok = await user.comparePassword(password);
-    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+    if (!ok) {
+      logLogin(req, { user, identifier: id, success: false, reason: "wrong password" });
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
+    logLogin(req, { user, identifier: id, success: true });
     const token = signToken(user);
     res.json({ token, user });
   } catch (err) {

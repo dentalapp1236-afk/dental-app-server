@@ -7,7 +7,11 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     phone: { type: String, trim: true, unique: true, sparse: true },
     password: { type: String, required: true, minlength: 8 },
-    role: { type: String, enum: ["dentist", "client", "vendor", "assistant"], required: true },
+    role: {
+      type: String,
+      enum: ["dentist", "client", "vendor", "assistant", "admin"],
+      required: true,
+    },
     // Client-only fields
     dateOfBirth: { type: Date },
     address: { type: String },
