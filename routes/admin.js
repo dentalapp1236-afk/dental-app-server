@@ -28,6 +28,32 @@ router.get("/logins", async (req, res) => {
   }
 });
 
+// DELETE /api/admin/logins/:id -> remove a single login record.
+router.delete("/logins/:id", async (req, res) => {
+  try {
+    const deleted = await LoginEvent.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Record not found" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// DELETE /api/admin/logins?olderThanDays=30  -> bulk delete (all if no param).
+router.delete("/logins", async (req, res) => {
+  try {
+    const days = Number(req.query.olderThanDays);
+    const filter =
+      days > 0 ? { createdAt: { $lt: new Date(Date.now() - days * 86400000) } } : {};
+    const r = await LoginEvent.deleteMany(filter);
+    res.json({ ok: true, deleted: r.deletedCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // GET /api/admin/summary?hours=24 -> headline numbers for the dashboard.
 router.get("/summary", async (req, res) => {
   try {
