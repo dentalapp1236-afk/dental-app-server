@@ -60,7 +60,7 @@ router.get("/summary", async (req, res) => {
     const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 720);
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-    const [successes, failures, uniqueUsers, byRoleAgg, totalUsers, usersByRoleAgg] =
+    const [successes, failures, uniqueUsers, byRoleAgg, totalUsers, usersByRoleAgg, pwaLogins] =
       await Promise.all([
         LoginEvent.countDocuments({ createdAt: { $gte: since }, success: true }),
         LoginEvent.countDocuments({ createdAt: { $gte: since }, success: false }),
@@ -71,13 +71,14 @@ router.get("/summary", async (req, res) => {
         ]),
         User.countDocuments({}),
         User.aggregate([{ $group: { _id: "$role", count: { $sum: 1 } } }]),
+        LoginEvent.countDocuments({ createdAt: { $gte: since }, success: true, pwa: true }),
       ]);
 
     const toMap = (arr) => arr.reduce((m, r) => ({ ...m, [r._id || "unknown"]: r.count }), {});
     res.json({
       hours,
       since,
-      logins: { success: successes, failed: failures, uniqueUsers: uniqueUsers.length },
+      logins: { success: successes, failed: failures, uniqueUsers: uniqueUsers.length, pwa: pwaLogins },
       loginsByRole: toMap(byRoleAgg),
       totalUsers,
       usersByRole: toMap(usersByRoleAgg),
@@ -99,7 +100,7 @@ router.get("/users", async (req, res) => {
       filter.$or = [{ name: rx }, { email: rx }, { phone: rx }, { clinicName: rx }];
     }
     const users = await User.find(filter)
-      .select("name email phone role clinicName managed createdAt")
+      .select("name email phone role clinicName managed lastLoginPwa createdAt")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();

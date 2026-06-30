@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema(
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
+    // How the user most recently accessed the app: true = installed PWA,
+    // false = browser tab, undefined = unknown. Updated on login + each app open.
+    lastLoginPwa: { type: Boolean },
+
     // Profile photo (Cloudinary secure URL) — shown on the dentist's public profile.
     image: { type: String, trim: true },
 

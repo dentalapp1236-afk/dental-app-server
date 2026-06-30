@@ -9,6 +9,7 @@ const loginEventSchema = new mongoose.Schema(
     role: { type: String },
     success: { type: Boolean, default: true },
     reason: { type: String }, // why a failed attempt failed
+    pwa: { type: Boolean, default: false }, // logged in from the installed PWA vs a browser
     ip: { type: String },
     userAgent: { type: String },
   },

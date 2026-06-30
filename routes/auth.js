@@ -8,6 +8,9 @@ import { sendMail } from "../utils/mailer.js";
 
 const router = express.Router();
 
+// Whether the request came from the installed PWA (standalone) vs a browser.
+const isPwa = (req) => req.headers["x-display-mode"] === "standalone";
+
 // Best-effort audit log of a login attempt (never blocks/fails the request).
 const logLogin = (req, { user, identifier, success, reason }) => {
   LoginEvent.create({
@@ -17,6 +20,7 @@ const logLogin = (req, { user, identifier, success, reason }) => {
     role: user?.role,
     success,
     reason,
+    pwa: isPwa(req),
     ip: req.ip,
     userAgent: req.headers["user-agent"],
   }).catch((e) => console.error("[loginEvent]", e?.message));
@@ -132,6 +136,11 @@ router.post("/login", async (req, res) => {
     }
 
     logLogin(req, { user, identifier: id, success: true });
+    // Track how the user accessed the app (PWA vs browser).
+    const pwa = isPwa(req);
+    if (user.lastLoginPwa !== pwa) {
+      User.updateOne({ _id: user._id }, { $set: { lastLoginPwa: pwa } }).catch(() => {});
+    }
     const token = signToken(user);
     res.json({ token, user });
   } catch (err) {
@@ -260,6 +269,12 @@ router.post("/reset-password", async (req, res) => {
 
 // GET /api/auth/me
 router.get("/me", protect, async (req, res) => {
+  // Refresh how the user is accessing the app (PWA vs browser) on each app open.
+  const pwa = isPwa(req);
+  if (req.user.lastLoginPwa !== pwa) {
+    req.user.lastLoginPwa = pwa;
+    User.updateOne({ _id: req.user._id }, { $set: { lastLoginPwa: pwa } }).catch(() => {});
+  }
   res.json({ user: req.user });
 });
 
