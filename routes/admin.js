@@ -95,6 +95,10 @@ router.get("/users", async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 1000);
     const filter = {};
     if (req.query.role) filter.role = req.query.role;
+    // PWA usage: "installed" = last opened via the installed app; "not" = last
+    // opened in a browser or never seen (candidates to nudge to install).
+    if (req.query.pwa === "installed") filter.lastLoginPwa = true;
+    else if (req.query.pwa === "not") filter.lastLoginPwa = { $ne: true };
     if (req.query.search) {
       const rx = new RegExp(req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       filter.$or = [{ name: rx }, { email: rx }, { phone: rx }, { clinicName: rx }];
