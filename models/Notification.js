@@ -15,5 +15,7 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ user: 1, read: 1, createdAt: -1 });
+// Auto-delete notifications 15 days after creation (MongoDB TTL index).
+notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 15 * 24 * 60 * 60 });
 
 export default mongoose.model("Notification", notificationSchema);

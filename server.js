@@ -24,6 +24,7 @@ import uploadsRoutes from "./routes/uploads.js";
 import adminRoutes from "./routes/admin.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
 import User from "./models/User.js";
+import Notification from "./models/Notification.js";
 
 const app = express();
 
@@ -108,6 +109,8 @@ connectDB()
     // Reconcile indexes so the email unique index becomes sparse (lets multiple
     // patients exist without an email). Safe + idempotent on a small collection.
     User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
+    // Build the 15-day TTL index so old notifications auto-delete.
+    Notification.syncIndexes().catch((e) => console.error("Notification.syncIndexes failed:", e.message));
   })
   .catch((err) => {
     console.error("Failed to start:", err.message);
