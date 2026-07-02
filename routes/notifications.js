@@ -5,14 +5,17 @@ import { protect } from "../middleware/auth.js";
 const router = express.Router();
 router.use(protect);
 
-// GET /api/notifications -> recent notifications + unread count for the user
+// GET /api/notifications?limit=50 -> notifications + unread count + total.
+// `limit` lets the client page back through older notifications ("Load older").
 router.get("/", async (req, res) => {
   try {
-    const [items, unreadCount] = await Promise.all([
-      Notification.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(50),
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+    const [items, unreadCount, total] = await Promise.all([
+      Notification.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(limit),
       Notification.countDocuments({ user: req.user._id, read: false }),
+      Notification.countDocuments({ user: req.user._id }),
     ]);
-    res.json({ items, unreadCount });
+    res.json({ items, unreadCount, total });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
