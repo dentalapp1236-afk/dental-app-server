@@ -1,0 +1,15 @@
+{
+  "login": {
+    "identifier": "dr.sarah.demo@dentalapp.test",
+    "password": "DemoPass123"
+  },
+  "dentistId": "6a4d0b1f5bc9353bfe29ada0",
+  "sampleClientId": "6a4d0dc3a928c73db20397e6",
+  "counts": {
+    "patients": 7,
+    "appointments": 12,
+    "treatments": 4,
+    "expenses": 5,
+    "reviews": 4
+  }
+}

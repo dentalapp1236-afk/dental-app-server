@@ -1,3 +1,8 @@
 node_modules
+
+# Real env files hold secrets — never commit them. Commit only *.example templates.
 .env
+.env.*
+!.env.*.example
+
 *.log

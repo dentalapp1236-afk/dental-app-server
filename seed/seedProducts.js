@@ -2,7 +2,7 @@
  * Seeds a demo vendor and a catalog of common dental supplies.
  * Run from the server/ directory:  node seed/seedProducts.js
  */
-import "dotenv/config";
+import "../config/loadEnv.js";
 import mongoose from "mongoose";
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
