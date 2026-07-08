@@ -1,6 +1,6 @@
 // Create (or update) the platform admin account.
 // Usage: ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='strongpass' npm run seed:admin
-import "dotenv/config";
+import "../config/loadEnv.js";
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
 
