@@ -168,6 +168,23 @@ router.put("/:id", async (req, res) => {
     for (const f of editable) if (req.body[f] !== undefined) tr[f] = req.body[f];
     if (req.body.cost !== undefined) tr.cost = Number(req.body.cost) || 0;
 
+    // Edit total collected: reconcile to the target by appending a single
+    // "Adjustment" entry (positive or negative) so existing payments are never
+    // rewritten and the change is visible in the payment history.
+    if (req.body.collected !== undefined) {
+      const target = Number(req.body.collected);
+      if (Number.isNaN(target) || target < 0) {
+        return res.status(400).json({ message: "Collected amount must be zero or more." });
+      }
+      if (target > tr.cost) {
+        return res.status(400).json({ message: "Collected amount cannot exceed the charges." });
+      }
+      const delta = Math.round((target - tr.paidAmount) * 100) / 100;
+      if (delta !== 0) {
+        tr.payments.push({ amount: delta, note: "Adjustment", date: new Date() });
+      }
+    }
+
     // paid:true -> record a settlement payment for whatever balance remains
     if (req.body.paid === true && tr.balance > 0) {
       tr.payments.push({ amount: tr.balance, note: "Settled" });

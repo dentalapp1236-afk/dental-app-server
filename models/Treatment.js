@@ -3,7 +3,10 @@ import mongoose from "mongoose";
 // A single payment made toward a treatment (upfront deposit or a per-visit charge)
 const paymentSchema = new mongoose.Schema(
   {
-    amount: { type: Number, required: true, min: 0 },
+    // Usually positive; a negative amount is allowed only for a correcting
+    // "Adjustment" entry when the collected total is edited downward. Normal
+    // payments are still validated as positive in the routes.
+    amount: { type: Number, required: true },
     date: { type: Date, default: Date.now },
     note: { type: String, trim: true },
     // How the payment was collected. Optional at schema level so older payments
