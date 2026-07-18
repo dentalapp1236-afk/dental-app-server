@@ -69,12 +69,20 @@ router.get("/:id", async (req, res) => {
     );
     if (!dentist) return res.status(404).json({ message: "Dentist not found" });
 
+    // Successful (completed) appointments — a trust signal on the public profile.
+    const completedCount = await Appointment.countDocuments({
+      dentist: dentist._id,
+      status: "completed",
+    });
+    const dentistObj = dentist.toJSON();
+    dentistObj.completedCount = completedCount;
+
     const reviews = await Review.find({ dentist: dentist._id })
       .populate("client", "name")
       .sort({ createdAt: -1 })
       .limit(20);
 
-    res.json({ dentist, reviews });
+    res.json({ dentist: dentistObj, reviews });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
