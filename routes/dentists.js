@@ -69,12 +69,9 @@ router.get("/:id", async (req, res) => {
     );
     if (!dentist) return res.status(404).json({ message: "Dentist not found" });
 
-    // Successful bookings (past + upcoming, excluding cancelled and no-shows) —
-    // a trust signal on the public profile.
-    const bookedCount = await Appointment.countDocuments({
-      dentist: dentist._id,
-      status: { $nin: ["cancelled", "no_show"] },
-    });
+    // Every appointment the dentist has had since joining — a trust signal on
+    // the public profile (all statuses included).
+    const bookedCount = await Appointment.countDocuments({ dentist: dentist._id });
     const dentistObj = dentist.toJSON();
     dentistObj.bookedCount = bookedCount;
 
