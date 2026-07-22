@@ -1,5 +1,6 @@
 import express from "express";
 import { runRemindersOnce } from "../jobs/reminders.js";
+import { runBalanceRemindersOnce } from "../jobs/balanceReminders.js";
 
 const router = express.Router();
 
@@ -12,8 +13,11 @@ const handler = async (req, res) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
   try {
+    // Appointment reminders + 15-day outstanding-balance reminders on the same
+    // external schedule (each is self-gated so it only sends when actually due).
     const sent = await runRemindersOnce();
-    res.json({ ok: true, sent });
+    const balanceRemindersSent = await runBalanceRemindersOnce();
+    res.json({ ok: true, sent, balanceRemindersSent });
   } catch (err) {
     console.error("[cron] reminder run failed:", err?.message);
     res.status(500).json({ message: "Server error" });

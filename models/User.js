@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema(
     // Link: a client may be created by / belong to a dentist
     dentist: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
+    // When the patient was last reminded about an outstanding treatment balance,
+    // so the reminder job only fires every 15 days per patient.
+    lastBalanceReminderAt: { type: Date },
+
     // How the user most recently accessed the app: true = installed PWA,
     // false = browser tab, undefined = unknown. Updated on login + each app open.
     lastLoginPwa: { type: Boolean },

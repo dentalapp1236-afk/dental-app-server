@@ -23,6 +23,7 @@ import cronRoutes from "./routes/cron.js";
 import uploadsRoutes from "./routes/uploads.js";
 import adminRoutes from "./routes/admin.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
+import { startBalanceReminders } from "./jobs/balanceReminders.js";
 import User from "./models/User.js";
 import Notification from "./models/Notification.js";
 
@@ -106,6 +107,7 @@ connectDB()
   .then(() => {
     app.listen(PORT, () => console.log(`API listening on :${PORT}`));
     startAppointmentReminders();
+    startBalanceReminders();
     // Reconcile indexes so the email unique index becomes sparse (lets multiple
     // patients exist without an email). Safe + idempotent on a small collection.
     User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
