@@ -1,13 +1,40 @@
 import express from "express";
+import mongoose from "mongoose";
 import Treatment from "../models/Treatment.js";
 import User from "../models/User.js";
 import { protect, clinicId } from "../middleware/auth.js";
-import { notifyClinic } from "../utils/notify.js";
+import { notifyClinic, notifyPatient } from "../utils/notify.js";
 
 const router = express.Router();
 router.use(protect);
 
 const isStaff = (user) => user.role === "dentist" || user.role === "assistant";
+
+const money = (n) => `Rs ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
+
+// Notify the patient (in-app + push + email) that a payment was collected.
+// Fire-and-forget: never block or fail the payment request on a notify error.
+async function notifyPaymentReceived(tr, amount) {
+  try {
+    if (!amount || amount <= 0) return;
+    const dentist = await User.findById(tr.dentist).select("name").catch(() => null);
+    const drName = dentist?.name ? `Dr. ${dentist.name}` : "your dentist";
+    const settled = tr.balance <= 0;
+    const body =
+      `Payment received: ${money(amount)} for your ${tr.procedure} with ${drName}. ` +
+      (settled
+        ? "Your balance is now fully cleared — thank you!"
+        : `Remaining balance: ${money(tr.balance)}.`);
+    await notifyPatient(tr.client, {
+      type: "payment_received",
+      title: "Payment received",
+      body,
+      url: "/client/treatments",
+    });
+  } catch (e) {
+    console.error("[payment notify]", e?.message);
+  }
+}
 
 // Map Mongoose optimistic-concurrency failures to a 409 so the client can refresh.
 const handleErr = (res, err) => {
@@ -43,6 +70,28 @@ router.get("/", async (req, res) => {
     .populate("dentist", "name email")
     .sort({ date: -1 });
   res.json(treatments);
+});
+
+// GET /api/treatments/outstanding  -> unpaid balance per patient for the clinic,
+// as { clientId: total }. Used by the dashboard to show a balance on each slot.
+// Must be declared before any "/:id" route so it isn't shadowed.
+router.get("/outstanding", async (req, res) => {
+  try {
+    if (!isStaff(req.user)) return res.status(403).json({ message: "Staff only" });
+    const dentistId = new mongoose.Types.ObjectId(String(clinicId(req.user)));
+    const rows = await Treatment.aggregate([
+      { $match: { dentist: dentistId } },
+      { $addFields: { paidAmount: { $sum: "$payments.amount" } } },
+      { $addFields: { outstanding: { $subtract: [{ $ifNull: ["$cost", 0] }, "$paidAmount"] } } },
+      { $match: { outstanding: { $gt: 0 } } },
+      { $group: { _id: "$client", total: { $sum: "$outstanding" } } },
+    ]);
+    const map = {};
+    for (const r of rows) map[String(r._id)] = Math.round(r.total);
+    res.json(map);
+  } catch (err) {
+    handleErr(res, err);
+  }
 });
 
 // POST /api/treatments/:id/follow-up  (patient/guardian) -> report a problem / recall.
@@ -143,6 +192,7 @@ router.post("/", async (req, res) => {
       paid: deposit >= total && total > 0,
       date,
     });
+    if (deposit > 0) notifyPaymentReceived(tr, deposit); // fire-and-forget
     res.status(201).json(tr);
   } catch (err) {
     handleErr(res, err);
@@ -168,6 +218,10 @@ router.put("/:id", async (req, res) => {
     for (const f of editable) if (req.body[f] !== undefined) tr[f] = req.body[f];
     if (req.body.cost !== undefined) tr.cost = Number(req.body.cost) || 0;
 
+    // Track how much new money was collected in this edit, so we can notify the
+    // patient (only for money coming IN, not a downward correction).
+    let collectedNow = 0;
+
     // Edit total collected: reconcile to the target by appending a single
     // "Adjustment" entry (positive or negative) so existing payments are never
     // rewritten and the change is visible in the payment history.
@@ -183,15 +237,19 @@ router.put("/:id", async (req, res) => {
       if (delta !== 0) {
         tr.payments.push({ amount: delta, note: "Adjustment", date: new Date() });
       }
+      if (delta > 0) collectedNow += delta;
     }
 
     // paid:true -> record a settlement payment for whatever balance remains
     if (req.body.paid === true && tr.balance > 0) {
-      tr.payments.push({ amount: tr.balance, note: "Settled" });
+      const settleAmount = tr.balance;
+      tr.payments.push({ amount: settleAmount, note: "Settled" });
+      collectedNow += settleAmount;
     }
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
 
     await tr.save();
+    if (collectedNow > 0) notifyPaymentReceived(tr, collectedNow); // fire-and-forget
     res.json(tr);
   } catch (err) {
     if (err.name === "VersionError") {
@@ -231,6 +289,7 @@ router.post("/:id/payments", async (req, res) => {
     tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
+    notifyPaymentReceived(tr, amount); // fire-and-forget
     res.status(201).json(tr);
   } catch (err) {
     handleErr(res, err);

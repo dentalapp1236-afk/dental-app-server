@@ -29,3 +29,33 @@ export async function notifyClinic(dentistId, { type, title, body, url, email })
     );
   }
 }
+
+// Notify a single patient (in-app + web push + email). Accepts a client id or a
+// loaded User doc. For a managed dependent, everything routes to the linked
+// guardian's account + email instead.
+export async function notifyPatient(clientOrId, { type, title, body, url }) {
+  let c = clientOrId;
+  if (!c || !c._id) {
+    c = await User.findById(clientOrId)
+      .select("name email managed guardian guardianName guardianEmail")
+      .catch(() => null);
+  }
+  if (!c) return;
+
+  const targetUser = c.managed ? c.guardian : c._id;
+  if (targetUser) {
+    Notification.create({ user: targetUser, type, title, body, data: { url } }).catch((e) =>
+      console.error("[notifyPatient] notif:", e?.message)
+    );
+    sendPush(targetUser, { title, body, url });
+  }
+
+  const to = c.managed ? c.guardianEmail : c.email;
+  if (to) {
+    const greet = c.managed ? c.guardianName || "there" : c.name;
+    const text = `Hi ${greet},\n\n${body}`;
+    sendMail({ to, subject: title, text, html: text.replace(/\n/g, "<br/>") }).catch((e) =>
+      console.error("[notifyPatient] email:", e?.message)
+    );
+  }
+}
