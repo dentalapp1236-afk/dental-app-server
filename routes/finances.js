@@ -253,6 +253,8 @@ router.get("/period", async (req, res) => {
         {
           $project: {
             _id: 0,
+            treatmentId: "$_id",
+            clientId: "$client",
             date: "$payments.date",
             amount: "$payments.amount",
             note: "$payments.note",
@@ -283,6 +285,7 @@ router.get("/period", async (req, res) => {
         {
           $project: {
             _id: 1,
+            clientId: "$client",
             date: 1,
             procedure: 1,
             cost: 1,
