@@ -159,7 +159,16 @@ router.get("/me", requireRole("client"), async (req, res) => {
     "dentist",
     "name clinicName"
   );
-  res.json({ dentist: me.dentist || null, pending: pending || null });
+  // The patient's own review of their current dentist (so the home screen shows
+  // "your review · edit" instead of re-prompting them to rate every visit).
+  let myReview = null;
+  if (me.dentist) {
+    const r = await Review.findOne({ dentist: me.dentist._id, client: me._id }).select(
+      "rating comment updatedAt"
+    );
+    if (r) myReview = { rating: r.rating, comment: r.comment || "", updatedAt: r.updatedAt };
+  }
+  res.json({ dentist: me.dentist || null, pending: pending || null, myReview });
 });
 
 // POST /api/associations/disassociate { rating, comment }  (client)
