@@ -449,6 +449,7 @@ router.put("/:id", async (req, res) => {
       set.remind12hSent = false;
       set.remind1hSent = false;
       set.arrivalStatus = "none";
+      set.arrivedAt = null;
     }
 
     // Guard the write with the version we validated, bumping it atomically.
@@ -613,24 +614,51 @@ router.patch("/:id/cancel", async (req, res) => {
   }
 });
 
-// PATCH /api/appointments/:id/arrival  (patient signals they're on the way / arrived)
+// PATCH /api/appointments/:id/arrival
+// The patient signals they're on the way / arrived; OR clinic staff (dentist or
+// assistant) mark a patient arrived on their behalf. Marking "arrived" stamps
+// arrivedAt, which starts the waiting-time counter shown on the clinic's
+// schedule (and, when the patient did it, on the patient's own screen).
 router.patch("/:id/arrival", async (req, res) => {
   try {
-    if (req.user.role !== "client") {
-      return res.status(403).json({ message: "Only the patient can update arrival status" });
-    }
+    const staffActor = isStaff(req.user);
+    // Staff may also reset to "none" (undo a mistaken mark); patients set only
+    // on_the_way / arrived.
+    const allowed = staffActor
+      ? ["none", "on_the_way", "arrived"]
+      : ["on_the_way", "arrived"];
     const { status } = req.body;
-    if (!["on_the_way", "arrived"].includes(status)) {
+    if (!allowed.includes(status)) {
       return res.status(400).json({ message: "Invalid arrival status" });
     }
+
     const appt = await Appointment.findById(req.params.id);
-    if (!appt || !(await clientOwnsAppt(req.user._id, appt))) {
-      return res.status(404).json({ message: "Appointment not found" });
+    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+
+    // Authorize: staff act on their own clinic; patients on their own appointment.
+    if (staffActor) {
+      if (String(appt.dentist) !== String(clinicId(req.user))) {
+        return res.status(404).json({ message: "Appointment not found" });
+      }
+    } else if (req.user.role === "client") {
+      if (!(await clientOwnsAppt(req.user._id, appt))) {
+        return res.status(404).json({ message: "Appointment not found" });
+      }
+    } else {
+      return res.status(403).json({ message: "Not allowed to update arrival status" });
     }
+
     if (appt.status !== "scheduled") {
       return res.status(400).json({ message: "Only confirmed appointments can be updated." });
     }
 
+    // Stamp arrivedAt the first time they're marked arrived (preserve it on
+    // repeat calls); clear it whenever they're no longer "arrived".
+    if (status === "arrived") {
+      if (appt.arrivalStatus !== "arrived" || !appt.arrivedAt) appt.arrivedAt = new Date();
+    } else {
+      appt.arrivedAt = undefined;
+    }
     appt.arrivalStatus = status;
     await appt.save();
     const populated = await appt.populate([
@@ -638,20 +666,24 @@ router.patch("/:id/arrival", async (req, res) => {
       { path: "client", select: "name" },
     ]);
 
-    const when = fmtWhen(appt.date);
-    const body =
-      status === "arrived"
-        ? `${populated.client.name} has arrived at the clinic for their ${when} appointment.`
-        : `${populated.client.name} is on the way to the clinic (appointment ${when}).`;
-    await notifyClinic(populated.dentist._id, {
-      type: "appointment_arrival",
-      title: status === "arrived" ? "Patient has arrived" : "Patient on the way",
-      body,
-      url: "/appointments",
-      email: populated.dentist.email
-        ? { to: populated.dentist.email, greeting: `Hi Dr. ${populated.dentist.name},\n\n` }
-        : null,
-    });
+    // Only notify the clinic when the PATIENT reports in — staff marking a
+    // patient arrived don't need to notify themselves.
+    if (!staffActor && status !== "none") {
+      const when = fmtWhen(appt.date);
+      const body =
+        status === "arrived"
+          ? `${populated.client.name} has arrived at the clinic for their ${when} appointment.`
+          : `${populated.client.name} is on the way to the clinic (appointment ${when}).`;
+      await notifyClinic(populated.dentist._id, {
+        type: "appointment_arrival",
+        title: status === "arrived" ? "Patient has arrived" : "Patient on the way",
+        body,
+        url: "/appointments",
+        email: populated.dentist.email
+          ? { to: populated.dentist.email, greeting: `Hi Dr. ${populated.dentist.name},\n\n` }
+          : null,
+      });
+    }
 
     res.json(populated);
   } catch (err) {
