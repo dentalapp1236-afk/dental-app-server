@@ -3,7 +3,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import LoginEvent from "../models/LoginEvent.js";
-import { protect } from "../middleware/auth.js";
+import { protect, requireStaff, clinicId } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
 
 const router = express.Router();
@@ -354,6 +354,10 @@ router.put("/me", protect, async (req, res) => {
         u.yearsOfExperience = Number(b.yearsOfExperience);
       }
       if (Array.isArray(b.availability)) u.availability = b.availability;
+      if (b.slotDuration != null && b.slotDuration !== "") {
+        const d = Number(b.slotDuration);
+        if (Number.isFinite(d) && d >= 5 && d <= 120) u.slotDuration = d;
+      }
       if (
         b.latitude != null &&
         b.longitude != null &&
@@ -369,6 +373,82 @@ router.put("/me", protect, async (req, res) => {
 
     await u.save();
     res.json({ user: u });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ---- Clinic settings (shared by the dentist and their assistants) ----
+// Clinic hours / slot length / location live on the clinic OWNER (dentist)
+// record. An assistant acts on behalf of that dentist, so both roles read and
+// write the same clinic-owner document via clinicId().
+
+// GET /api/auth/clinic-settings -> the clinic's operational settings.
+router.get("/clinic-settings", protect, requireStaff, async (req, res) => {
+  try {
+    const owner = await User.findById(clinicId(req.user))
+      .select("clinicName availability slotDuration dayOverrides location")
+      .lean();
+    if (!owner) return res.status(404).json({ message: "Clinic not found" });
+    res.json({
+      clinicName: owner.clinicName || "",
+      availability: owner.availability || [],
+      slotDuration: owner.slotDuration || 15,
+      dayOverrides: owner.dayOverrides || [],
+      location: owner.location || null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PUT /api/auth/clinic-settings -> update the clinic's operational settings.
+router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
+  try {
+    const owner = await User.findById(clinicId(req.user));
+    if (!owner) return res.status(404).json({ message: "Clinic not found" });
+    const b = req.body;
+
+    if (Array.isArray(b.availability)) owner.availability = b.availability;
+    if (b.slotDuration != null && b.slotDuration !== "") {
+      const d = Number(b.slotDuration);
+      if (Number.isFinite(d) && d >= 5 && d <= 120) owner.slotDuration = d;
+    }
+    if (Array.isArray(b.dayOverrides)) {
+      // Keep only well-formed, current-or-future entries so the list can't grow
+      // unbounded with stale past exceptions.
+      const todayStr = new Date().toISOString().slice(0, 10);
+      owner.dayOverrides = b.dayOverrides
+        .filter((o) => o && /^\d{4}-\d{2}-\d{2}$/.test(o.date) && o.date >= todayStr)
+        .map((o) => ({
+          date: o.date,
+          closed: !!o.closed,
+          start: o.closed ? undefined : o.start || undefined,
+          end: o.closed ? undefined : o.end || undefined,
+        }));
+    }
+    if (
+      b.latitude != null &&
+      b.longitude != null &&
+      b.latitude !== "" &&
+      b.longitude !== ""
+    ) {
+      owner.location = {
+        type: "Point",
+        coordinates: [Number(b.longitude), Number(b.latitude)],
+      };
+    }
+
+    await owner.save();
+    res.json({
+      clinicName: owner.clinicName || "",
+      availability: owner.availability || [],
+      slotDuration: owner.slotDuration || 15,
+      dayOverrides: owner.dayOverrides || [],
+      location: owner.location || null,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

@@ -58,6 +58,23 @@ const userSchema = new mongoose.Schema(
         end: { type: String },
       },
     ],
+    // Length of a single appointment slot in minutes (dentist-configurable).
+    // Controls how clinic hours are divided into bookable time slots.
+    slotDuration: { type: Number, default: 15, min: 5, max: 120 },
+    // Per-date exceptions to the weekly availability, e.g. the doctor leaving
+    // early on a specific day or taking the day off. When an entry matches the
+    // booking date it overrides the normal weekly hours for that date only.
+    //   { date: "2026-08-02", closed: false, start: "09:00", end: "21:00" }
+    //   { date: "2026-12-25", closed: true }  // day off
+    dayOverrides: [
+      {
+        _id: false,
+        date: { type: String }, // YYYY-MM-DD
+        closed: { type: Boolean, default: false },
+        start: { type: String },
+        end: { type: String },
+      },
+    ],
     // Denormalized rating, recomputed from Reviews
     rating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },

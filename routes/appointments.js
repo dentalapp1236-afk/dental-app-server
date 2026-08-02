@@ -140,11 +140,13 @@ router.get("/booked", async (req, res) => {
 
     const [appts, dentist] = await Promise.all([
       Appointment.find(q).select("date").lean(),
-      User.findById(dentistId).select("availability").lean(),
+      User.findById(dentistId).select("availability slotDuration dayOverrides").lean(),
     ]);
     res.json({
       slots: appts.map((a) => a.date),
       availability: dentist?.availability || [],
+      slotDuration: dentist?.slotDuration || 15,
+      dayOverrides: dentist?.dayOverrides || [],
     });
   } catch (err) {
     console.error(err);

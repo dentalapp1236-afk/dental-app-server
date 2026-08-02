@@ -9,7 +9,7 @@ const router = express.Router();
 
 // Public profile fields exposed in discovery (never password/email of other users)
 const PUBLIC_FIELDS =
-  "name clinicName about specialization yearsOfExperience availability rating reviewCount location image createdAt";
+  "name clinicName about specialization yearsOfExperience availability slotDuration rating reviewCount location image createdAt";
 
 // GET /api/dentists?lat=..&lng=..&maxKm=..  -> list dentists, nearest first when coords given
 router.get("/", async (req, res) => {
@@ -99,8 +99,15 @@ router.get("/:id/booked", async (req, res) => {
       if (from) q.date.$gte = new Date(from);
       if (to) q.date.$lt = new Date(to);
     }
-    const appts = await Appointment.find(q).select("date").lean();
-    res.json({ slots: appts.map((a) => a.date) });
+    const [appts, dentist] = await Promise.all([
+      Appointment.find(q).select("date").lean(),
+      User.findById(req.params.id).select("slotDuration dayOverrides").lean(),
+    ]);
+    res.json({
+      slots: appts.map((a) => a.date),
+      slotDuration: dentist?.slotDuration || 15,
+      dayOverrides: dentist?.dayOverrides || [],
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
