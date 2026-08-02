@@ -26,6 +26,19 @@ const appointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Make duplicate bookings impossible at the database level: a dentist can have
+// at most ONE scheduled appointment at a given instant. Even if two requests
+// race past the app-level "is this slot free?" check, the second insert/confirm
+// hits this unique index and fails with a duplicate-key (E11000) error, which
+// the routes translate into a clean "that slot was just taken" 409.
+//
+// Partial (status: "scheduled") so cancelled / completed / no-show rows never
+// block re-booking the same slot later.
+appointmentSchema.index(
+  { dentist: 1, date: 1 },
+  { unique: true, partialFilterExpression: { status: "scheduled" }, name: "uniq_dentist_slot_scheduled" }
+);
+
 // Whenever the appointment time changes via a document save(), re-arm the
 // reminders and clear travel status so the patient is reminded for the NEW time.
 // (findOneAndUpdate bypasses this hook, so the PUT route handles that path itself.)

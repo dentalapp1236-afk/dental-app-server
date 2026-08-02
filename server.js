@@ -26,6 +26,7 @@ import { startAppointmentReminders } from "./jobs/reminders.js";
 import { startBalanceReminders } from "./jobs/balanceReminders.js";
 import User from "./models/User.js";
 import Notification from "./models/Notification.js";
+import Appointment from "./models/Appointment.js";
 
 const app = express();
 
@@ -113,6 +114,17 @@ connectDB()
     User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
     // Build the 15-day TTL index so old notifications auto-delete.
     Notification.syncIndexes().catch((e) => console.error("Notification.syncIndexes failed:", e.message));
+    // Build the unique "one scheduled appointment per slot" index — makes
+    // duplicate bookings impossible at the DB level. If it can't build because
+    // pre-existing duplicate scheduled appointments are present, we log a clear
+    // message and keep running (the app-level checks still apply); the index
+    // activates automatically on the next restart once no duplicates remain.
+    Appointment.createIndexes().catch((e) =>
+      console.error(
+        "[index] Appointment unique-slot index NOT active — remove duplicate scheduled appointments to enable full duplicate protection:",
+        e.message
+      )
+    );
   })
   .catch((err) => {
     console.error("Failed to start:", err.message);

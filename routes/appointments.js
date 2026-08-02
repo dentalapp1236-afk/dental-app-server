@@ -212,6 +212,12 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({ appointment: populated, shareMessage, whatsappUrl });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        message: "That slot was just taken — please pick another time.",
+        code: "SLOT_TAKEN",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
@@ -284,6 +290,12 @@ router.post("/request", async (req, res) => {
 
     res.status(201).json({ appointment: appt });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        message: "That slot was just taken — please pick another time.",
+        code: "SLOT_TAKEN",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
@@ -338,6 +350,12 @@ router.patch("/:id/confirm", async (req, res) => {
 
     res.json(populated);
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        message: "That slot is already taken — decline this request or reschedule.",
+        code: "SLOT_TAKEN",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
@@ -463,6 +481,12 @@ router.put("/:id", async (req, res) => {
 
     res.json(appt);
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        message: "That slot was just taken — please pick another time.",
+        code: "SLOT_TAKEN",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
@@ -532,6 +556,12 @@ router.patch("/:id/reschedule", async (req, res) => {
 
     res.json(populated);
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        message: "That slot was just taken — please pick another time.",
+        code: "SLOT_TAKEN",
+      });
+    }
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
