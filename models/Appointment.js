@@ -18,6 +18,9 @@ const appointmentSchema = new mongoose.Schema(
       enum: ["none", "on_the_way", "arrived"],
       default: "none",
     },
+    // When the patient was marked "arrived" — powers the waiting-time counter on
+    // the clinic's schedule so staff can see how long each patient has waited.
+    arrivedAt: { type: Date },
     // One-time reminder flags, reset whenever the appointment is (re)scheduled.
     remind24hSent: { type: Boolean, default: false }, // ~24h-before reminder sent
     remind12hSent: { type: Boolean, default: false }, // ~12h-before reminder sent
@@ -48,6 +51,7 @@ appointmentSchema.pre("save", function (next) {
     this.remind12hSent = false;
     this.remind1hSent = false;
     this.arrivalStatus = "none";
+    this.arrivedAt = undefined;
   }
   next();
 });
