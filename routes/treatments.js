@@ -179,6 +179,24 @@ router.post("/", async (req, res) => {
     const payments =
       deposit > 0 ? [{ amount: deposit, note: "Upfront", method: upfrontMethod }] : [];
 
+    // Idempotency guard: a rapid double-submit (or network retry) can POST the
+    // exact same treatment twice/thrice, which then double-counts in finances.
+    // If an identical treatment for this patient (same procedure, tooth and cost)
+    // was just created in the last few seconds, return that one instead of adding
+    // a duplicate. A genuine repeat treatment later (outside the window, or a
+    // different tooth) is unaffected.
+    const dup = await Treatment.findOne({
+      dentist: clinicId(req.user),
+      client,
+      procedure,
+      cost: total,
+      toothNumber: toothNumber ?? null,
+      createdAt: { $gte: new Date(Date.now() - 12000) },
+    }).sort({ createdAt: -1 });
+    if (dup) {
+      return res.status(201).json(dup);
+    }
+
     const tr = await Treatment.create({
       dentist: clinicId(req.user),
       client,
