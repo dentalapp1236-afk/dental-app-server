@@ -44,6 +44,13 @@ const userSchema = new mongoose.Schema(
     about: { type: String, trim: true },
     specialization: { type: String, trim: true },
     yearsOfExperience: { type: Number, min: 0 },
+    // Directory / SEO fields (optional). Used to build public, search-indexable
+    // dentist profile pages and city listings. Safe to leave empty — profiles
+    // still render from clinicName, specialization, hours and ratings.
+    city: { type: String, trim: true },
+    area: { type: String, trim: true },
+    services: { type: [String], default: undefined },
+    slug: { type: String, trim: true },
     // GeoJSON point for "nearest dentist" discovery: coordinates = [longitude, latitude]
     location: {
       type: { type: String, enum: ["Point"], default: undefined },

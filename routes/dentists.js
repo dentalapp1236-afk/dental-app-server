@@ -9,7 +9,7 @@ const router = express.Router();
 
 // Public profile fields exposed in discovery (never password/email of other users)
 const PUBLIC_FIELDS =
-  "name clinicName about specialization yearsOfExperience availability slotDuration rating reviewCount location image createdAt";
+  "name clinicName about specialization yearsOfExperience availability slotDuration rating reviewCount location image createdAt address city area services slug";
 
 // GET /api/dentists?lat=..&lng=..&maxKm=..  -> list dentists, nearest first when coords given
 router.get("/", async (req, res) => {
