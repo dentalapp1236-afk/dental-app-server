@@ -38,10 +38,81 @@ const dentistNameFor = async (user) => {
 
 // True if a scheduled or pending appointment already occupies this exact slot.
 const ACTIVE = ["scheduled", "pending"];
+// A slot is taken if another active appointment for this dentist OVERLAPS it —
+// i.e. starts within one slot-length of the requested time — not only if it's the
+// exact same instant. This stops two appointments a few minutes apart on the same
+// chair (e.g. an 8:45 booking made under a 15-min grid vs an 8:40 booking under a
+// 20-min grid). Appointments exactly one slot-length apart (adjacent slots) are
+// still allowed. The exact-time unique index remains as the race-proof backstop.
 const slotConflict = async (dentistId, date, exceptId) => {
-  const query = { dentist: dentistId, status: { $in: ACTIVE }, date: new Date(date) };
+  const owner = await User.findById(dentistId).select("slotDuration").lean();
+  const gapMs = (owner?.slotDuration || 15) * 60000;
+  const t = new Date(date).getTime();
+  const query = {
+    dentist: dentistId,
+    status: { $in: ACTIVE },
+    date: { $gt: new Date(t - gapMs), $lt: new Date(t + gapMs) },
+  };
   if (exceptId) query._id = { $ne: exceptId };
   return Appointment.findOne(query);
+};
+
+// ---- Clinic-timezone slot validation (mirrors the client's slot logic) ----
+// The clinic runs in Pakistan time (UTC+5, no DST). We validate a requested time
+// IN THAT TIMEZONE so a crafted request can't book outside the clinic's opening
+// hours or off the slot grid, no matter what the client sends.
+const CLINIC_OFFSET_MIN = 5 * 60;
+const DOW_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const pad2 = (n) => String(n).padStart(2, "0");
+const hhmmToMin = (s) => {
+  const [h, m] = String(s).split(":").map(Number);
+  return h * 60 + (m || 0);
+};
+const clinicPartsOf = (date) => {
+  const s = new Date(new Date(date).getTime() + CLINIC_OFFSET_MIN * 60000);
+  return {
+    dayStr: `${s.getUTCFullYear()}-${pad2(s.getUTCMonth() + 1)}-${pad2(s.getUTCDate())}`,
+    dow: s.getUTCDay(),
+    minutes: s.getUTCHours() * 60 + s.getUTCMinutes(),
+  };
+};
+// Returns an error message if `date` is not a bookable slot for this dentist
+// (clinic closed that day, outside opening hours, or off the slot grid); else null.
+const invalidSlotReason = async (dentistId, date) => {
+  const owner = await User.findById(dentistId)
+    .select("availability slotDuration dayOverrides")
+    .lean();
+  if (!owner) return null; // nothing to validate against
+  const { dayStr, dow, minutes } = clinicPartsOf(date);
+  const step = owner.slotDuration || 15;
+  const availability = owner.availability || [];
+  const overrides = owner.dayOverrides || [];
+
+  // Effective hours for this clinic day — a per-date override wins over the
+  // weekly hours (same precedence the client uses).
+  let hours = null;
+  const ov = overrides.find((o) => o.date === dayStr);
+  if (ov && ov.closed) return "The clinic is closed on this day.";
+  if (ov && ov.start && ov.end) {
+    hours = { start: hhmmToMin(ov.start), end: hhmmToMin(ov.end) };
+  } else {
+    const entry = availability.find((a) => a.day === DOW_LABEL[dow]);
+    if (entry && entry.start && entry.end) {
+      hours = { start: hhmmToMin(entry.start), end: hhmmToMin(entry.end) };
+    } else if (availability.length === 0) {
+      hours = { start: 9 * 60, end: 18 * 60 }; // no hours set -> sensible default
+    } else {
+      return "The clinic is closed on this day.";
+    }
+  }
+
+  if (minutes < hours.start || minutes >= hours.end) {
+    return "That time is outside the clinic's opening hours.";
+  }
+  if ((minutes - hours.start) % step !== 0) {
+    return "That time is not a valid appointment slot.";
+  }
+  return null;
 };
 
 // Calendar-day window [start, end) for the given instant.
@@ -255,6 +326,9 @@ router.post("/request", async (req, res) => {
     if (!dentistId) {
       return res.status(400).json({ message: "You are not associated with a dentist yet." });
     }
+
+    const badSlot = await invalidSlotReason(dentistId, date);
+    if (badSlot) return res.status(400).json({ message: badSlot, code: "INVALID_SLOT" });
 
     if (await slotConflict(dentistId, date)) {
       return res.status(409).json({
@@ -514,6 +588,9 @@ router.patch("/:id/reschedule", async (req, res) => {
     if (!ACTIVE.includes(appt.status)) {
       return res.status(400).json({ message: "Only active appointments can be rescheduled." });
     }
+
+    const badSlot = await invalidSlotReason(appt.dentist, date);
+    if (badSlot) return res.status(400).json({ message: badSlot, code: "INVALID_SLOT" });
 
     if (await slotConflict(appt.dentist, date, appt._id)) {
       return res.status(409).json({
