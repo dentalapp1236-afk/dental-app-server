@@ -6,7 +6,9 @@ import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.use(protect, requireRole("dentist", "assistant"));
+// Finances (income totals, trends) are the clinic owner's — assistants must not
+// see them. Dentist-only across every endpoint in this router.
+router.use(protect, requireRole("dentist"));
 
 // GET /api/finances/summary -> income (treatments), expenses (supply orders), trends, outstanding
 router.get("/summary", async (req, res) => {
