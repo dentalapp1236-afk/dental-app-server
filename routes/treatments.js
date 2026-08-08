@@ -12,6 +12,17 @@ const isStaff = (user) => user.role === "dentist" || user.role === "assistant";
 
 const money = (n) => `Rs ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
 
+// Tidy free-text so careless casing doesn't reach the record. We only uppercase
+// the FIRST letter of words (never lowercase the rest) so acronyms like "OPG",
+// "TMJ" or "X-ray" are preserved. Procedures get each word capitalised (e.g.
+// "root canal" -> "Root Canal"); diagnosis/notes get just the first letter.
+const clean = (s) => String(s ?? "").trim().replace(/\s+/g, " ");
+const capWords = (s) => clean(s).replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+const capFirst = (s) => {
+  const t = clean(s);
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+};
+
 // Notify the patient (in-app + push + email) that a payment was collected.
 // Fire-and-forget: never block or fail the payment request on a notify error.
 async function notifyPaymentReceived(tr, amount) {
@@ -171,6 +182,10 @@ router.post("/", async (req, res) => {
     if (!client || !procedure) {
       return res.status(400).json({ message: "client and procedure are required" });
     }
+    // Normalise casing so careless entry doesn't reach the record.
+    const procedureClean = capWords(procedure);
+    const diagnosisClean = capFirst(diagnosis);
+    const descriptionClean = capFirst(description);
     const total = Number(cost) || 0;
     const deposit = Number(upfront) || 0;
     if (deposit > 0 && !["cash", "online"].includes(upfrontMethod)) {
@@ -188,7 +203,7 @@ router.post("/", async (req, res) => {
     const dup = await Treatment.findOne({
       dentist: clinicId(req.user),
       client,
-      procedure,
+      procedure: procedureClean,
       cost: total,
       toothNumber: toothNumber ?? null,
       createdAt: { $gte: new Date(Date.now() - 12000) },
@@ -201,10 +216,10 @@ router.post("/", async (req, res) => {
       dentist: clinicId(req.user),
       client,
       appointment,
-      procedure,
+      procedure: procedureClean,
       toothNumber,
-      diagnosis,
-      description,
+      diagnosis: diagnosisClean,
+      description: descriptionClean,
       cost: total,
       payments,
       paid: deposit >= total && total > 0,
@@ -234,6 +249,10 @@ router.put("/:id", async (req, res) => {
 
     const editable = ["procedure", "toothNumber", "diagnosis", "description", "date"];
     for (const f of editable) if (req.body[f] !== undefined) tr[f] = req.body[f];
+    // Normalise casing on edit too (procedure -> Each Word, others -> First letter).
+    if (req.body.procedure !== undefined) tr.procedure = capWords(req.body.procedure);
+    if (req.body.diagnosis !== undefined) tr.diagnosis = capFirst(req.body.diagnosis);
+    if (req.body.description !== undefined) tr.description = capFirst(req.body.description);
     if (req.body.cost !== undefined) tr.cost = Number(req.body.cost) || 0;
 
     // Track how much new money was collected in this edit, so we can notify the
