@@ -455,6 +455,25 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
   }
 });
 
+// GET /api/auth/agreement — the clinic's agreement status (dentist or assistant).
+// Reads the clinic OWNER's record so an assistant can view it (read-only).
+router.get("/agreement", protect, requireStaff, async (req, res) => {
+  try {
+    const owner = await User.findById(clinicId(req.user))
+      .select("agreement clinicName name")
+      .lean();
+    if (!owner) return res.status(404).json({ message: "Clinic not found" });
+    res.json({
+      agreement: owner.agreement?.acceptedAt ? owner.agreement : null,
+      clinicName: owner.clinicName || "",
+      ownerName: owner.name || "",
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // POST /api/auth/agreement/accept — dentist e-signs the service agreement.
 router.post("/agreement/accept", protect, async (req, res) => {
   try {

@@ -115,4 +115,43 @@ router.get("/users", async (req, res) => {
   }
 });
 
+// GET /api/admin/enrollments -> every clinic (dentist) with its e-agreement
+// status: enrollment date, discovery-end (sign date + 3 months), and phase.
+router.get("/enrollments", async (req, res) => {
+  try {
+    const dentists = await User.find({ role: "dentist" })
+      .select("name clinicName email phone agreement createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+    const now = Date.now();
+    const clinics = dentists.map((d) => {
+      const acceptedAt = d.agreement?.acceptedAt || null;
+      let discoveryEnd = null;
+      let phase = "not_signed";
+      if (acceptedAt) {
+        const de = new Date(acceptedAt);
+        de.setMonth(de.getMonth() + 3);
+        discoveryEnd = de;
+        phase = now < de.getTime() ? "discovery" : "paid";
+      }
+      return {
+        _id: d._id,
+        name: d.name,
+        clinicName: d.clinicName || "",
+        email: d.email || "",
+        phone: d.phone || "",
+        signedName: d.agreement?.name || null,
+        acceptedAt,
+        discoveryEnd,
+        phase, // not_signed | discovery | paid
+        createdAt: d.createdAt,
+      };
+    });
+    res.json({ count: clinics.length, clinics });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 export default router;
