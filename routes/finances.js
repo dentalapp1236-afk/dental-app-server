@@ -302,11 +302,21 @@ router.get("/period", async (req, res) => {
     const sum = (arr, k) => arr.reduce((s, i) => s + (i[k] || 0), 0);
     const expenseItems = [...orderItems, ...maintItems].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // Split collected payments by method. Anything not explicitly "online" counts
+    // as cash (the default), so cash + online always equals the grand total.
+    const onlineItems = collectedItems.filter((i) => i.method === "online");
+    const cashItems = collectedItems.filter((i) => i.method !== "online");
+
     res.json({
       period,
       offset,
       label,
-      collected: { total: sum(collectedItems, "amount"), items: collectedItems },
+      collected: {
+        total: sum(collectedItems, "amount"),
+        items: collectedItems,
+        cash: { total: sum(cashItems, "amount"), items: cashItems },
+        online: { total: sum(onlineItems, "amount"), items: onlineItems },
+      },
       expenses: { total: sum(expenseItems, "amount"), items: expenseItems },
       outstanding: { total: sum(outstandingItems, "balance"), items: outstandingItems },
     });
