@@ -194,22 +194,37 @@ router.post("/", async (req, res) => {
     const payments =
       deposit > 0 ? [{ amount: deposit, note: "Upfront", method: upfrontMethod }] : [];
 
-    // Idempotency guard: a rapid double-submit (or network retry) can POST the
-    // exact same treatment twice/thrice, which then double-counts in finances.
-    // If an identical treatment for this patient (same procedure, tooth and cost)
-    // was just created in the last few seconds, return that one instead of adding
-    // a duplicate. A genuine repeat treatment later (outside the window, or a
-    // different tooth) is unaffected.
-    const dup = await Treatment.findOne({
+    // Duplicate guard. Two failure modes:
+    //  (a) a rapid double-submit / network retry from ONE device, and
+    //  (b) two staff (dentist + assistant, on separate phones) both recording the
+    //      SAME treatment for a patient without seeing the other's entry.
+    // We look for an existing treatment for this patient with the same procedure,
+    // cost and tooth ON THE SAME DAY. A very recent match is a retry (return it
+    // silently); an older match is likely a real duplicate, so we ask the staff to
+    // confirm (409) — and only add it if they resend with force:true.
+    const force = req.body.force === true;
+    const base = date ? new Date(date) : new Date();
+    const dayStart = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()));
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+    const existing = await Treatment.findOne({
       dentist: clinicId(req.user),
       client,
       procedure: procedureClean,
       cost: total,
       toothNumber: toothNumber ?? null,
-      createdAt: { $gte: new Date(Date.now() - 12000) },
+      date: { $gte: dayStart, $lt: dayEnd },
     }).sort({ createdAt: -1 });
-    if (dup) {
-      return res.status(201).json(dup);
+    if (existing) {
+      if (Date.now() - new Date(existing.createdAt).getTime() < 15000) {
+        return res.status(201).json(existing); // retry / double-submit
+      }
+      if (!force) {
+        return res.status(409).json({
+          message: "A matching treatment for this patient is already recorded today.",
+          code: "DUP_TREATMENT",
+        });
+      }
     }
 
     const tr = await Treatment.create({
