@@ -50,12 +50,22 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || "")
   .map((o) => o.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
+// Also allow this project's own Vercel deployments — the production alias,
+// git/preview builds, and named test builds (e.g. dental-app-client-test) —
+// so testing URLs work without reconfiguring CLIENT_ORIGIN each time. Scoped to
+// the dental-app-client* subdomain only (not all of *.vercel.app).
+const VERCEL_PROJECT_ORIGIN = /^https:\/\/dental-app-client[a-z0-9-]*\.vercel\.app$/;
+
 app.use(
   cors({
     origin(origin, cb) {
       if (!origin) return cb(null, true); // non-browser / same-origin requests
       const normalized = origin.replace(/\/+$/, "");
-      if (allowedOrigins.length === 0 || allowedOrigins.includes(normalized)) {
+      if (
+        allowedOrigins.length === 0 ||
+        allowedOrigins.includes(normalized) ||
+        VERCEL_PROJECT_ORIGIN.test(normalized)
+      ) {
         return cb(null, true);
       }
       return cb(new Error(`Origin ${origin} not allowed by CORS`));
