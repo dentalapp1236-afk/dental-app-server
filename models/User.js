@@ -92,6 +92,14 @@ const userSchema = new mongoose.Schema(
     // Password reset (hashed token + expiry)
     resetTokenHash: { type: String },
     resetTokenExpires: { type: Date },
+
+    // E-signed service agreement (dentist accepts the terms in-app instead of on
+    // paper). Records who signed, when, and which version of the terms.
+    agreement: {
+      acceptedAt: { type: Date },
+      name: { type: String, trim: true },
+      version: { type: String },
+    },
   },
   { timestamps: true }
 );

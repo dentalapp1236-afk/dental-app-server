@@ -455,4 +455,25 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
   }
 });
 
+// POST /api/auth/agreement/accept — dentist e-signs the service agreement.
+router.post("/agreement/accept", protect, async (req, res) => {
+  try {
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only the clinic owner can sign the agreement." });
+    }
+    const name = String(req.body.name || "").trim();
+    const version = String(req.body.version || "").trim();
+    if (name.length < 2) {
+      return res.status(400).json({ message: "Please type your full name to sign." });
+    }
+    const u = req.user;
+    u.agreement = { acceptedAt: new Date(), name, version: version || "v1" };
+    await u.save();
+    res.json({ user: u });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 export default router;
