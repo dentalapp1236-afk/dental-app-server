@@ -288,11 +288,13 @@ router.post("/:id/payments", async (req, res) => {
       return res.status(403).json({ message: "Only clinic staff can record payments" });
     }
     const amount = Number(req.body.amount);
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: "A positive amount is required" });
+    // Allow a Rs 0 entry (e.g. logging a visit where nothing was collected).
+    if (Number.isNaN(amount) || amount < 0) {
+      return res.status(400).json({ message: "A valid amount is required" });
     }
     const { method } = req.body;
-    if (!["cash", "online"].includes(method)) {
+    // A payment method only matters when money actually changed hands.
+    if (amount > 0 && !["cash", "online"].includes(method)) {
       return res.status(400).json({ message: "Select how the payment was collected (cash or online)." });
     }
     const tr = await Treatment.findOne({ _id: req.params.id, dentist: clinicId(req.user) });
@@ -307,7 +309,7 @@ router.post("/:id/payments", async (req, res) => {
     tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
-    notifyPaymentReceived(tr, amount); // fire-and-forget
+    if (amount > 0) notifyPaymentReceived(tr, amount); // fire-and-forget; skip for a 0 log
     res.status(201).json(tr);
   } catch (err) {
     handleErr(res, err);
