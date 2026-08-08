@@ -5,7 +5,8 @@ import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.use(protect, requireRole("dentist", "assistant"));
+// Expenses expose clinic spending — dentist-only, hidden from assistants.
+router.use(protect, requireRole("dentist"));
 
 // GET /api/expenses -> dentist's maintenance expenses (newest first)
 router.get("/", async (req, res) => {

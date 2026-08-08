@@ -455,11 +455,14 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
   }
 });
 
-// GET /api/auth/agreement — the clinic's agreement status (dentist or assistant).
-// Reads the clinic OWNER's record so an assistant can view it (read-only).
-router.get("/agreement", protect, requireStaff, async (req, res) => {
+// GET /api/auth/agreement — the clinic's agreement status. Dentist-only: the
+// billing/agreement status is the owner's and is hidden from assistants.
+router.get("/agreement", protect, async (req, res) => {
   try {
-    const owner = await User.findById(clinicId(req.user))
+    if (req.user.role !== "dentist") {
+      return res.status(403).json({ message: "Only the clinic owner can view the agreement." });
+    }
+    const owner = await User.findById(req.user._id)
       .select("agreement clinicName name")
       .lean();
     if (!owner) return res.status(404).json({ message: "Clinic not found" });
