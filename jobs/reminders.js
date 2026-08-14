@@ -52,14 +52,21 @@ async function sendWindow({ flag, ms, lead }) {
     // otherwise the patient. Always email the right contact.
     const targetUser = c.managed ? c.guardian : c._id;
     if (targetUser) {
-      await Notification.create({
-        user: targetUser,
-        type: "appointment_reminder",
-        title: "Appointment reminder",
-        body,
-        data: { url: "/client", appointmentId: appt._id },
-      }).catch((e) => console.error("[reminder] notif:", e?.message));
-      sendPush(targetUser, { title: "Appointment reminder", body, url: "/client" });
+      let ack;
+      try {
+        const n = await Notification.create({
+          user: targetUser,
+          type: "appointment_reminder",
+          title: "Appointment reminder",
+          body,
+          data: { url: "/client", appointmentId: appt._id, canAcknowledge: true },
+        });
+        ack = String(n._id);
+      } catch (e) {
+        console.error("[reminder] notif:", e?.message);
+      }
+      const push = { title: "Appointment reminder", body, url: "/client" };
+      sendPush(targetUser, ack ? { ...push, ack } : push);
     }
 
     const to = c.managed ? c.guardianEmail : c.email;

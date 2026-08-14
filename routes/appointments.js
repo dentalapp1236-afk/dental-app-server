@@ -153,12 +153,16 @@ const clientNotifyTarget = (c) => ({
     : null,
 });
 
-const notifyUser = async (userId, { type, title, body, url, email }) => {
+const notifyUser = async (userId, { type, title, body, url, email, data }) => {
   if (userId) {
-    Notification.create({ user: userId, type, title, body, data: { url } }).catch((e) =>
-      console.error("notif failed:", e?.message)
-    );
-    sendPush(userId, { title, body, url });
+    let ack;
+    try {
+      const n = await Notification.create({ user: userId, type, title, body, data: { url, ...data } });
+      if (data?.canAcknowledge) ack = String(n._id); // lets the push carry an Acknowledge action
+    } catch (e) {
+      console.error("notif failed:", e?.message);
+    }
+    sendPush(userId, ack ? { title, body, url, ack } : { title, body, url });
   }
   if (email?.to) {
     const text = `${email.greeting || ""}${body}`;
@@ -278,6 +282,7 @@ router.post("/", async (req, res) => {
       body,
       url: "/client",
       email: t.email,
+      data: { appointmentId: populated._id, canAcknowledge: true },
     });
 
     const shareMessage = `Hi ${c.managed ? c.guardianName || "there" : c.name}, ${body}`;
@@ -422,6 +427,7 @@ router.patch("/:id/confirm", async (req, res) => {
       body: `Dr. ${dName} confirmed ${whose} appointment on ${when}.`,
       url: "/client",
       email: t.email,
+      data: { appointmentId: appt._id, canAcknowledge: true },
     });
 
     res.json(populated);
