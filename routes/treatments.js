@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import Treatment from "../models/Treatment.js";
 import User from "../models/User.js";
 import { protect, clinicId } from "../middleware/auth.js";
-import { notifyClinic, notifyPatient } from "../utils/notify.js";
+import { notifyClinic, notifyPatient, notifyUser } from "../utils/notify.js";
 
 const router = express.Router();
 router.use(protect);
@@ -25,12 +25,14 @@ const capFirst = (s) => {
 
 // Notify the patient (in-app + push + email) that a payment was collected.
 // Fire-and-forget: never block or fail the payment request on a notify error.
-async function notifyPaymentReceived(tr, amount) {
+async function notifyPaymentReceived(tr, amount, actor) {
   try {
     if (!amount || amount <= 0) return;
     const dentist = await User.findById(tr.dentist).select("name").catch(() => null);
     const drName = dentist?.name ? `Dr. ${dentist.name}` : "your dentist";
     const settled = tr.balance <= 0;
+
+    // Patient notification.
     const body =
       `Payment received: ${money(amount)} for your ${tr.procedure} with ${drName}. ` +
       (settled
@@ -42,6 +44,22 @@ async function notifyPaymentReceived(tr, amount) {
       body,
       url: "/client/treatments",
     });
+
+    // When an ASSISTANT collected the payment, notify the doctor (clinic owner)
+    // so he's aware of money collected on his behalf.
+    if (actor?.role === "assistant" && String(actor._id) !== String(tr.dentist)) {
+      const patient = await User.findById(tr.client).select("name").catch(() => null);
+      const patientName = patient?.name || "a patient";
+      const staffBody =
+        `${actor.name} collected ${money(amount)} from ${patientName} for ${tr.procedure}. ` +
+        (settled ? "Balance is now cleared." : `Remaining balance: ${money(tr.balance)}.`);
+      await notifyUser(tr.dentist, {
+        type: "payment_collected",
+        title: "Payment collected",
+        body: staffBody,
+        url: `/clients/${tr.client}`,
+      });
+    }
   } catch (e) {
     console.error("[payment notify]", e?.message);
   }
@@ -240,7 +258,7 @@ router.post("/", async (req, res) => {
       paid: deposit >= total && total > 0,
       date,
     });
-    if (deposit > 0) notifyPaymentReceived(tr, deposit); // fire-and-forget
+    if (deposit > 0) notifyPaymentReceived(tr, deposit, req.user); // fire-and-forget
     res.status(201).json(tr);
   } catch (err) {
     handleErr(res, err);
@@ -301,7 +319,7 @@ router.put("/:id", async (req, res) => {
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
 
     await tr.save();
-    if (collectedNow > 0) notifyPaymentReceived(tr, collectedNow); // fire-and-forget
+    if (collectedNow > 0) notifyPaymentReceived(tr, collectedNow, req.user); // fire-and-forget
     res.json(tr);
   } catch (err) {
     if (err.name === "VersionError") {
@@ -343,7 +361,7 @@ router.post("/:id/payments", async (req, res) => {
     tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
-    if (amount > 0) notifyPaymentReceived(tr, amount); // fire-and-forget; skip for a 0 log
+    if (amount > 0) notifyPaymentReceived(tr, amount, req.user); // fire-and-forget; skip for a 0 log
     res.status(201).json(tr);
   } catch (err) {
     handleErr(res, err);
