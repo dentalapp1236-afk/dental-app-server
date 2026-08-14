@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import jwt from "jsonwebtoken";
 import cors from "cors";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
@@ -89,6 +90,28 @@ app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/forgot-password", forgotLimiter);
 app.use("/api/auth/reset-password", forgotLimiter);
 app.use("/api/uploads/avatar", uploadLimiter);
+
+// Read-only enforcement for admin "View as" (impersonation) sessions: a token
+// minted with { readOnly: true } may only perform GET requests — every write is
+// blocked so an admin can observe a clinic without changing its data.
+app.use("/api", (req, res, next) => {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  const h = req.headers.authorization || "";
+  if (h.startsWith("Bearer ")) {
+    try {
+      const p = jwt.verify(h.slice(7), process.env.JWT_SECRET);
+      if (p.readOnly) {
+        return res.status(403).json({
+          message: "You're viewing this clinic in read-only mode. Changes are disabled.",
+          code: "READ_ONLY",
+        });
+      }
+    } catch {
+      /* invalid/expired token — let protect return 401 */
+    }
+  }
+  next();
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/clients", clientsRoutes);

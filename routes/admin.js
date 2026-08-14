@@ -1,4 +1,5 @@
 import express from "express";
+import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import LoginEvent from "../models/LoginEvent.js";
 import { protect, requireRole } from "../middleware/auth.js";
@@ -148,6 +149,57 @@ router.get("/enrollments", async (req, res) => {
       };
     });
     res.json({ count: clinics.length, clinics });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// "View as" — mint a short-lived, read-only token so an admin can observe a
+// dentist's exact view without their (hashed, unrecoverable) password. The token
+// carries { readOnly: true }, which the global guard uses to block every write.
+router.post("/impersonate/:dentistId", async (req, res) => {
+  try {
+    const dentist = await User.findOne({
+      _id: req.params.dentistId,
+      role: "dentist",
+    }).select("_id name clinicName email");
+    if (!dentist) return res.status(404).json({ message: "Dentist not found" });
+
+    const token = jwt.sign(
+      {
+        id: String(dentist._id),
+        role: "dentist",
+        readOnly: true,
+        impersonatedBy: String(req.user._id),
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
+    // Audit trail: who viewed whom (auto-expires with the login-event TTL).
+    LoginEvent.create({
+      user: dentist._id,
+      name: dentist.name,
+      identifier: dentist.email || "",
+      role: "dentist",
+      success: true,
+      reason: `read-only view by admin ${req.user.email || req.user._id}`,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] || "",
+    }).catch(() => {});
+    console.log(`[impersonate] admin ${req.user._id} -> dentist ${dentist._id} (read-only)`);
+
+    const base =
+      (process.env.CLIENT_ORIGIN || "").split(",")[0].trim() || "http://localhost:5173";
+    const label = dentist.clinicName || dentist.name || "clinic";
+    const url = `${base}/impersonate#token=${token}&name=${encodeURIComponent(label)}`;
+
+    res.json({
+      token,
+      url,
+      dentist: { _id: dentist._id, name: dentist.name, clinicName: dentist.clinicName || "" },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
