@@ -2,6 +2,8 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import LoginEvent from "../models/LoginEvent.js";
+import Invoice from "../models/Invoice.js";
+import { generateInvoicesOnce, DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
 import { protect, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -121,7 +123,7 @@ router.get("/users", async (req, res) => {
 router.get("/enrollments", async (req, res) => {
   try {
     const dentists = await User.find({ role: "dentist" })
-      .select("name clinicName email phone agreement createdAt")
+      .select("name clinicName email phone agreement billing createdAt")
       .sort({ createdAt: -1 })
       .lean();
     const now = Date.now();
@@ -145,6 +147,10 @@ router.get("/enrollments", async (req, res) => {
         acceptedAt,
         discoveryEnd,
         phase, // not_signed | discovery | paid
+        billing: {
+          startMonth: d.billing?.startMonth || "",
+          monthlyFee: d.billing?.monthlyFee ?? null,
+        },
         createdAt: d.createdAt,
       };
     });
@@ -200,6 +206,79 @@ router.post("/impersonate/:dentistId", async (req, res) => {
       url,
       dentist: { _id: dentist._id, name: dentist.name, clinicName: dentist.clinicName || "" },
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ---- Subscription invoices ------------------------------------------------
+
+// Set (or clear) a clinic's billing start month + optional fee override.
+router.put("/dentists/:id/billing", async (req, res) => {
+  try {
+    const d = await User.findOne({ _id: req.params.id, role: "dentist" });
+    if (!d) return res.status(404).json({ message: "Dentist not found" });
+    const { startMonth, monthlyFee } = req.body;
+    if (startMonth !== undefined && startMonth && !/^\d{4}-\d{2}$/.test(startMonth)) {
+      return res.status(400).json({ message: "startMonth must be YYYY-MM" });
+    }
+    d.billing = d.billing || {};
+    if (startMonth !== undefined) d.billing.startMonth = startMonth || undefined;
+    if (monthlyFee !== undefined) {
+      d.billing.monthlyFee = monthlyFee === "" || monthlyFee == null ? undefined : Number(monthlyFee);
+    }
+    d.markModified("billing");
+    await d.save();
+    res.json({ _id: d._id, billing: d.billing });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Generate any due-but-missing invoices right now (idempotent).
+router.post("/invoices/generate", async (req, res) => {
+  try {
+    const created = await generateInvoicesOnce();
+    res.json({ created });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// All invoices, newest month first.
+router.get("/invoices", async (req, res) => {
+  try {
+    const invoices = await Invoice.find()
+      .populate("dentist", "name clinicName email billing")
+      .sort({ month: -1, createdAt: -1 });
+    res.json({ count: invoices.length, defaultFee: DEFAULT_MONTHLY_FEE, invoices });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Mark an invoice paid / unpaid (and optional note).
+router.patch("/invoices/:id", async (req, res) => {
+  try {
+    const inv = await Invoice.findById(req.params.id);
+    if (!inv) return res.status(404).json({ message: "Invoice not found" });
+    const { status, note } = req.body;
+    if (status === "paid") {
+      inv.status = "paid";
+      inv.paidAt = new Date();
+      inv.markedBy = req.user._id;
+    } else if (status === "unpaid") {
+      inv.status = "unpaid";
+      inv.paidAt = undefined;
+      inv.markedBy = undefined;
+    }
+    if (note !== undefined) inv.note = note;
+    await inv.save();
+    res.json(inv);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

@@ -100,6 +100,13 @@ const userSchema = new mongoose.Schema(
       name: { type: String, trim: true },
       version: { type: String },
     },
+
+    // Subscription billing, set by the admin (works even for clinics that never
+    // signed the e-agreement). Monthly invoices are generated from startMonth on.
+    billing: {
+      startMonth: { type: String }, // first month to invoice, "YYYY-MM"
+      monthlyFee: { type: Number }, // per-clinic override; global default applies if unset
+    },
   },
   { timestamps: true }
 );

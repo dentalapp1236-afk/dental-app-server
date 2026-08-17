@@ -17,6 +17,7 @@ import productsRoutes from "./routes/products.js";
 import ordersRoutes from "./routes/orders.js";
 import financesRoutes from "./routes/finances.js";
 import expensesRoutes from "./routes/expenses.js";
+import invoiceRoutes from "./routes/invoices.js";
 import associationsRoutes from "./routes/associations.js";
 import notificationsRoutes from "./routes/notifications.js";
 import pushRoutes from "./routes/push.js";
@@ -25,6 +26,7 @@ import uploadsRoutes from "./routes/uploads.js";
 import adminRoutes from "./routes/admin.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
 import { startBalanceReminders } from "./jobs/balanceReminders.js";
+import { startInvoiceJob } from "./jobs/invoices.js";
 import User from "./models/User.js";
 import Notification from "./models/Notification.js";
 import Appointment from "./models/Appointment.js";
@@ -124,6 +126,7 @@ app.use("/api/products", productsRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/finances", financesRoutes);
 app.use("/api/expenses", expensesRoutes);
+app.use("/api/invoices", invoiceRoutes);
 app.use("/api/associations", associationsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/push", pushRoutes);
@@ -142,6 +145,7 @@ connectDB()
     app.listen(PORT, () => console.log(`API listening on :${PORT}`));
     startAppointmentReminders();
     startBalanceReminders();
+    startInvoiceJob();
     // Reconcile indexes so the email unique index becomes sparse (lets multiple
     // patients exist without an email). Safe + idempotent on a small collection.
     User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
