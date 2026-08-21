@@ -35,6 +35,9 @@ const treatmentSchema = new mongoose.Schema(
     toothNumber: { type: String },
     diagnosis: { type: String },
     description: { type: String },
+    // Post-visit prescription / care advice for the patient (e.g. "avoid hot
+    // drinks"). Shown to the patient in their Treatments view.
+    prescription: { type: String },
     cost: { type: Number, default: 0 }, // total agreed amount
     payments: { type: [paymentSchema], default: [] }, // upfront + per-visit charges
     paid: { type: Boolean, default: false }, // derived: balance <= 0

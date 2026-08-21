@@ -411,7 +411,14 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
     if (!owner) return res.status(404).json({ message: "Clinic not found" });
     const b = req.body;
 
-    if (Array.isArray(b.availability)) owner.availability = b.availability;
+    if (Array.isArray(b.availability)) {
+      // Keep only well-formed { day, start, end } blocks. A day may repeat (a
+      // morning + an evening session), so we don't collapse by day here.
+      const hhmm = /^\d{2}:\d{2}$/;
+      owner.availability = b.availability
+        .filter((a) => a && a.day && hhmm.test(a.start || "") && hhmm.test(a.end || "") && a.start < a.end)
+        .map((a) => ({ day: a.day, start: a.start, end: a.end }));
+    }
     if (b.slotDuration != null && b.slotDuration !== "") {
       const d = Number(b.slotDuration);
       if (Number.isFinite(d) && d >= 5 && d <= 120) owner.slotDuration = d;

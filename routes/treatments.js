@@ -192,6 +192,7 @@ router.post("/", async (req, res) => {
       toothNumber,
       diagnosis,
       description,
+      prescription,
       cost,
       upfront,
       upfrontMethod,
@@ -204,6 +205,7 @@ router.post("/", async (req, res) => {
     const procedureClean = capWords(procedure);
     const diagnosisClean = capFirst(diagnosis);
     const descriptionClean = capFirst(description);
+    const prescriptionClean = capFirst(prescription);
     const total = Number(cost) || 0;
     const deposit = Number(upfront) || 0;
     if (deposit > 0 && !["cash", "online"].includes(upfrontMethod)) {
@@ -253,6 +255,7 @@ router.post("/", async (req, res) => {
       toothNumber,
       diagnosis: diagnosisClean,
       description: descriptionClean,
+      prescription: prescriptionClean,
       cost: total,
       payments,
       paid: deposit >= total && total > 0,
@@ -286,6 +289,7 @@ router.put("/:id", async (req, res) => {
     if (req.body.procedure !== undefined) tr.procedure = capWords(req.body.procedure);
     if (req.body.diagnosis !== undefined) tr.diagnosis = capFirst(req.body.diagnosis);
     if (req.body.description !== undefined) tr.description = capFirst(req.body.description);
+    if (req.body.prescription !== undefined) tr.prescription = capFirst(req.body.prescription);
     if (req.body.cost !== undefined) tr.cost = Number(req.body.cost) || 0;
 
     // Track how much new money was collected in this edit, so we can notify the
