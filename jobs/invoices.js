@@ -6,7 +6,7 @@ const CHECK_MS = 6 * 60 * 60 * 1000; // re-check a few times a day
 
 // Standard monthly fee (Rs). Discounted clinics override via billing.monthlyFee
 // (e.g. Dr Ahmad is billed Rs 3,000). Overridable globally with MONTHLY_FEE.
-export const DEFAULT_MONTHLY_FEE = Number(process.env.MONTHLY_FEE || 5000);
+export const DEFAULT_MONTHLY_FEE = Number(process.env.MONTHLY_FEE || 3000);
 
 const ISSUE_DAY = 5; // invoices go out on the 5th
 const DUE_DAY = 15; // payment due on the 15th
