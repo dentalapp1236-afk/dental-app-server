@@ -26,9 +26,11 @@ const logLogin = (req, { user, identifier, success, reason }) => {
   }).catch((e) => console.error("[loginEvent]", e?.message));
 };
 
-const signToken = (user) =>
+// remember=true (default) keeps the user signed in for JWT_EXPIRES_IN (15d);
+// remember=false issues a short-lived token for shared/public devices.
+const signToken = (user, remember = true) =>
   jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    expiresIn: remember ? process.env.JWT_EXPIRES_IN || "15d" : "1d",
   });
 
 // The UI shows "Dr. <name>", so strip a leading "Dr"/"Dr." the dentist may have typed.
@@ -114,7 +116,7 @@ router.post("/register", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     // Accept an email OR phone number under `identifier` (falls back to `email`)
-    const { identifier, email, password } = req.body;
+    const { identifier, email, password, remember } = req.body;
     const id = (identifier ?? email ?? "").trim();
     if (!id || !password) {
       return res.status(400).json({ message: "Email/phone and password required" });
@@ -141,7 +143,7 @@ router.post("/login", async (req, res) => {
     if (user.lastLoginPwa !== pwa) {
       User.updateOne({ _id: user._id }, { $set: { lastLoginPwa: pwa } }).catch(() => {});
     }
-    const token = signToken(user);
+    const token = signToken(user, remember !== false);
     res.json({ token, user });
   } catch (err) {
     console.error(err);
