@@ -175,6 +175,18 @@ const notifyUser = async (userId, { type, title, body, url, email, data }) => {
 // GET /api/appointments
 // Dentist: appointments where they are the dentist
 // Client: appointments where they are the client
+// GET /api/appointments/pending-count -> how many patient-requested appointments
+// are awaiting confirm/decline. Cheap poll target for a nav-badge; the full
+// appointment list is unbounded and too heavy to fetch just for a count.
+router.get("/pending-count", async (req, res) => {
+  if (!isStaff(req.user)) return res.json({ count: 0 });
+  const count = await Appointment.countDocuments({
+    dentist: clinicId(req.user),
+    status: "pending",
+  });
+  res.json({ count });
+});
+
 router.get("/", async (req, res) => {
   let filter;
   if (isStaff(req.user)) {
