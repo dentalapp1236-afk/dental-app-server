@@ -9,6 +9,7 @@ import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import clientsRoutes from "./routes/clients.js";
 import staffRoutes from "./routes/staff.js";
+import engagementRoutes from "./routes/engagements.js";
 import familyRoutes from "./routes/family.js";
 import appointmentsRoutes from "./routes/appointments.js";
 import treatmentsRoutes from "./routes/treatments.js";
@@ -118,6 +119,7 @@ app.use("/api", (req, res, next) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/staff", staffRoutes);
+app.use("/api/engagements", engagementRoutes);
 app.use("/api/family", familyRoutes);
 app.use("/api/appointments", appointmentsRoutes);
 app.use("/api/treatments", treatmentsRoutes);

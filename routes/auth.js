@@ -60,8 +60,8 @@ router.post("/register", async (req, res) => {
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "name, email, password, role are required" });
     }
-    if (!["dentist", "client", "vendor"].includes(role)) {
-      return res.status(400).json({ message: "role must be dentist, client, or vendor" });
+    if (!["dentist", "client", "vendor", "assistant"].includes(role)) {
+      return res.status(400).json({ message: "role must be dentist, client, vendor, or assistant" });
     }
     if (password.length < 8) {
       return res.status(400).json({ message: "Password must be at least 8 characters" });
