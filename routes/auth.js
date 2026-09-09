@@ -373,6 +373,22 @@ router.put("/me", protect, async (req, res) => {
       }
     }
 
+    // Assistant professional profile (portable across clinics).
+    if (u.role === "assistant") {
+      if (b.specialization !== undefined) u.specialization = b.specialization; // title / role
+      if (b.about !== undefined) u.about = b.about;
+      if (b.address !== undefined) u.address = b.address; // city / location
+      if (b.yearsOfExperience !== undefined) {
+        u.yearsOfExperience = b.yearsOfExperience === "" ? undefined : Number(b.yearsOfExperience);
+      }
+      if (b.skills !== undefined) {
+        const list = Array.isArray(b.skills)
+          ? b.skills
+          : String(b.skills).split(",");
+        u.skills = list.map((s) => s.trim()).filter(Boolean).slice(0, 20);
+      }
+    }
+
     await u.save();
     res.json({ user: u });
   } catch (err) {

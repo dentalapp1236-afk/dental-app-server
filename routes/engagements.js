@@ -32,6 +32,28 @@ router.get("/me", async (req, res) => {
   }
 });
 
+// GET /api/engagements/history -> the assistant's full work history (active +
+// ended engagements) with clinic names + dates, newest first.
+router.get("/history", async (req, res) => {
+  try {
+    const list = await Engagement.find({ assistant: req.user._id, status: { $in: ["active", "ended"] } })
+      .populate("dentist", "name clinicName")
+      .sort({ startedAt: -1, createdAt: -1 });
+    res.json(
+      list.map((e) => ({
+        _id: e._id,
+        status: e.status,
+        clinic: e.dentist?.clinicName || e.dentist?.name || "A clinic",
+        startedAt: e.startedAt,
+        endedAt: e.endedAt,
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // POST /api/engagements/:id/accept -> accept a pending invite from a dentist.
 router.post("/:id/accept", async (req, res) => {
   try {
