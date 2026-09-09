@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import LoginEvent from "../models/LoginEvent.js";
 import Invoice from "../models/Invoice.js";
+import Engagement from "../models/Engagement.js";
 import { generateInvoicesOnce, DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
 import { protect, requireRole } from "../middleware/auth.js";
 
@@ -102,12 +103,23 @@ router.get("/users", async (req, res) => {
     // opened in a browser or never seen (candidates to nudge to install).
     if (req.query.pwa === "installed") filter.lastLoginPwa = true;
     else if (req.query.pwa === "not") filter.lastLoginPwa = { $ne: true };
+
+    const and = [];
     if (req.query.search) {
       const rx = new RegExp(req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ name: rx }, { email: rx }, { phone: rx }, { clinicName: rx }];
+      and.push({ $or: [{ name: rx }, { email: rx }, { phone: rx }, { clinicName: rx }] });
     }
+    // Doctor-wise filter: patients/assistants of that clinic + the doctor.
+    if (req.query.dentist) {
+      const did = req.query.dentist;
+      const engs = await Engagement.find({ dentist: did, status: "active" }).select("assistant").lean();
+      const staffIds = engs.map((e) => e.assistant);
+      and.push({ $or: [{ dentist: did }, { _id: did }, ...(staffIds.length ? [{ _id: { $in: staffIds } }] : [])] });
+    }
+    if (and.length) filter.$and = and;
+
     const users = await User.find(filter)
-      .select("name email phone role clinicName managed lastLoginPwa createdAt")
+      .select("name email phone role clinicName dentist managed lastLoginPwa createdAt")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
