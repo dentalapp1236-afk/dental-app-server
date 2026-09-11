@@ -17,7 +17,7 @@ router.get("/summary", async (req, res) => {
 
     // --- Income from treatments (collected = sum of actual payments) ---
     const [income] = await Treatment.aggregate([
-      { $match: { dentist: dentistId } },
+      { $match: { dentist: dentistId, deletedAt: null } },
       { $addFields: { collected: { $sum: "$payments.amount" } } },
       {
         $group: {
@@ -52,7 +52,7 @@ router.get("/summary", async (req, res) => {
 
     // --- Monthly trend (last 6 months): collected income vs supply spend ---
     const incomeByMonth = await Treatment.aggregate([
-      { $match: { dentist: dentistId } },
+      { $match: { dentist: dentistId, deletedAt: null } },
       { $unwind: "$payments" },
       {
         $group: {
@@ -248,7 +248,7 @@ router.get("/period", async (req, res) => {
     const [collectedItems, orderItems, maintItems, outstandingItems] = await Promise.all([
       // Payments collected within the period
       Treatment.aggregate([
-        { $match: { dentist: dentistId } },
+        { $match: { dentist: dentistId, deletedAt: null } },
         { $unwind: "$payments" },
         { $match: { "payments.date": inRange } },
         { $lookup: { from: "users", localField: "client", foreignField: "_id", as: "c" } },
@@ -279,7 +279,7 @@ router.get("/period", async (req, res) => {
       ]),
       // Treatments billed within the period that still have a balance
       Treatment.aggregate([
-        { $match: { dentist: dentistId, date: inRange } },
+        { $match: { dentist: dentistId, date: inRange, deletedAt: null } },
         { $addFields: { paidAmount: { $sum: "$payments.amount" } } },
         { $addFields: { balance: { $subtract: ["$cost", "$paidAmount"] } } },
         { $match: { balance: { $gt: 0 } } },
@@ -351,7 +351,7 @@ router.get("/trend", async (req, res) => {
 
     const [income, orders, maint] = await Promise.all([
       Treatment.aggregate([
-        { $match: { dentist: dentistId } },
+        { $match: { dentist: dentistId, deletedAt: null } },
         { $unwind: "$payments" },
         { $group: { _id: keyOf("$payments.date"), amount: { $sum: "$payments.amount" } } },
       ]),

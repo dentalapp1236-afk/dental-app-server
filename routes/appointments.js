@@ -273,6 +273,7 @@ router.post("/", async (req, res) => {
       date,
       reason,
       notes,
+      createdBy: req.user._id,
     });
     const populated = await appt.populate([
       { path: "client", select: "name email phone managed guardian guardianName guardianEmail guardianPhone" },
@@ -366,6 +367,7 @@ router.post("/request", async (req, res) => {
       date,
       reason,
       status: "pending",
+      createdBy: req.user._id,
     });
 
     const when = fmtWhen(date);
@@ -422,6 +424,7 @@ router.patch("/:id/confirm", async (req, res) => {
     appt.remind24hSent = false;
     appt.remind12hSent = false;
     appt.remind1hSent = false;
+    appt.updatedBy = req.user._id;
     await appt.save();
     const populated = await appt.populate([
       { path: "client", select: "name email phone managed guardian guardianName guardianEmail" },
@@ -466,6 +469,7 @@ router.patch("/:id/decline", async (req, res) => {
     if (!appt) return res.status(404).json({ message: "Request not found" });
 
     appt.status = "cancelled";
+    appt.updatedBy = req.user._id;
     await appt.save();
     const populated = await appt.populate([
       { path: "client", select: "name email phone managed guardian guardianName guardianEmail" },
@@ -529,7 +533,7 @@ router.put("/:id", async (req, res) => {
     const dateChanged =
       date !== undefined && new Date(date).getTime() !== new Date(current.date).getTime();
 
-    const set = {};
+    const set = { updatedBy: req.user._id };
     if (date !== undefined) set.date = date;
     if (reason !== undefined) set.reason = reason;
     if (notes !== undefined) set.notes = notes;
@@ -630,6 +634,7 @@ router.patch("/:id/reschedule", async (req, res) => {
     appt.remind24hSent = false; // re-arm reminders for the new time
     appt.remind12hSent = false;
     appt.remind1hSent = false;
+    appt.updatedBy = req.user._id;
     await appt.save();
 
     const populated = await appt.populate([
@@ -681,6 +686,7 @@ router.patch("/:id/cancel", async (req, res) => {
 
     const wasPending = appt.status === "pending";
     appt.status = "cancelled";
+    appt.updatedBy = req.user._id;
     await appt.save();
 
     const populated = await appt.populate([
@@ -788,15 +794,25 @@ router.patch("/:id/arrival", async (req, res) => {
 });
 
 // DELETE /api/appointments/:id
+// Soft delete: the row stays in the database (who deleted it, and when, is
+// preserved) instead of vanishing without a trace. Every ordinary read
+// excludes it via the model's pre-find hook.
 router.delete("/:id", async (req, res) => {
   if (!isStaff(req.user)) {
     return res.status(403).json({ message: "Only clinic staff can delete appointments" });
   }
-  const appt = await Appointment.findOneAndDelete({
+  const appt = await Appointment.findOne({
     _id: req.params.id,
     dentist: clinicId(req.user),
   });
   if (!appt) return res.status(404).json({ message: "Appointment not found" });
+  appt.deletedAt = new Date();
+  appt.deletedBy = req.user._id;
+  // A deleted row left with status "scheduled" would still occupy its slot
+  // under the partial unique index (which only excludes non-"scheduled" rows),
+  // blocking re-booking — cancel it too so the slot frees up.
+  if (appt.status === "scheduled") appt.status = "cancelled";
+  await appt.save();
   res.json({ message: "Deleted" });
 });
 

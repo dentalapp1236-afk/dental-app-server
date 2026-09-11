@@ -29,7 +29,7 @@ await connectDB();
 
 // Groups of scheduled appointments that share the exact same dentist + instant.
 const groups = await Appointment.aggregate([
-  { $match: { status: "scheduled" } },
+  { $match: { status: "scheduled", deletedAt: null } },
   {
     $group: {
       _id: { dentist: "$dentist", date: "$date" },

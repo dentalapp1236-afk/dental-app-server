@@ -19,6 +19,7 @@ export async function runBalanceRemindersOnce() {
   // Sum the outstanding amount per patient across all their treatments.
   // (balance is a virtual, so compute cost − payments in the pipeline.)
   const rows = await Treatment.aggregate([
+    { $match: { deletedAt: null } },
     { $addFields: { paidAmount: { $sum: "$payments.amount" } } },
     { $addFields: { outstanding: { $subtract: [{ $ifNull: ["$cost", 0] }, "$paidAmount"] } } },
     { $match: { outstanding: { $gt: 0 } } },

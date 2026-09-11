@@ -44,6 +44,17 @@ const treatmentSchema = new mongoose.Schema(
     date: { type: Date, default: Date.now },
     // Patient-initiated recalls/problem reports about this treatment.
     followUps: { type: [followUpSchema], default: [] },
+
+    // Audit trail: who actually performed each action (may be an assistant
+    // acting on the dentist's behalf — distinct from `dentist`, which is always
+    // the clinic this treatment belongs to).
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    // Soft delete: a deleted treatment is never physically removed, so it can
+    // still be traced back (who deleted it, when) instead of vanishing without
+    // a trace. Every normal query excludes these via the pre-find hook below.
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   {
     timestamps: true,
@@ -61,5 +72,16 @@ treatmentSchema.virtual("paidAmount").get(function () {
 treatmentSchema.virtual("balance").get(function () {
   return Math.max(0, (this.cost || 0) - this.paidAmount);
 });
+
+// Exclude soft-deleted rows from every ordinary read, unless a query
+// explicitly filters on deletedAt itself.
+function excludeDeleted(next) {
+  if (this.getFilter().deletedAt === undefined) {
+    this.where({ deletedAt: null });
+  }
+  next();
+}
+treatmentSchema.pre(/^find/, excludeDeleted);
+treatmentSchema.pre("countDocuments", excludeDeleted);
 
 export default mongoose.model("Treatment", treatmentSchema);

@@ -109,7 +109,7 @@ router.get("/outstanding", async (req, res) => {
     if (!isStaff(req.user)) return res.status(403).json({ message: "Staff only" });
     const dentistId = new mongoose.Types.ObjectId(String(clinicId(req.user)));
     const rows = await Treatment.aggregate([
-      { $match: { dentist: dentistId } },
+      { $match: { dentist: dentistId, deletedAt: null } },
       { $addFields: { paidAmount: { $sum: "$payments.amount" } } },
       { $addFields: { outstanding: { $subtract: [{ $ifNull: ["$cost", 0] }, "$paidAmount"] } } },
       { $match: { outstanding: { $gt: 0 } } },
@@ -263,6 +263,7 @@ router.post("/", async (req, res) => {
       payments,
       paid: deposit >= total && total > 0,
       date,
+      createdBy: req.user._id,
     });
     if (deposit > 0) notifyPaymentReceived(tr, deposit, req.user); // fire-and-forget
     res.status(201).json(tr);
@@ -324,6 +325,7 @@ router.put("/:id", async (req, res) => {
       collectedNow += settleAmount;
     }
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    tr.updatedBy = req.user._id;
 
     await tr.save();
     if (collectedNow > 0) notifyPaymentReceived(tr, collectedNow, req.user); // fire-and-forget
@@ -390,6 +392,7 @@ router.post("/:id/payments", async (req, res) => {
 
     tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    tr.updatedBy = req.user._id;
     await tr.save();
     if (amount > 0) notifyPaymentReceived(tr, amount, req.user); // fire-and-forget; skip for a 0 log
     res.status(201).json(tr);
@@ -433,6 +436,7 @@ router.put("/:id/payments/:paymentId", async (req, res) => {
     }
 
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    tr.updatedBy = req.user._id;
     await tr.save();
     res.json(tr);
   } catch (err) {
@@ -453,6 +457,7 @@ router.delete("/:id/payments/:paymentId", async (req, res) => {
 
     pay.deleteOne();
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
+    tr.updatedBy = req.user._id;
     await tr.save();
     res.json(tr);
   } catch (err) {
@@ -461,15 +466,21 @@ router.delete("/:id/payments/:paymentId", async (req, res) => {
 });
 
 // DELETE /api/treatments/:id
+// Soft delete: the row stays in the database (who deleted it, and when, is
+// preserved) instead of vanishing without a trace. Every ordinary read
+// excludes it via the model's pre-find hook.
 router.delete("/:id", async (req, res) => {
   if (!isStaff(req.user)) {
     return res.status(403).json({ message: "Only clinic staff can delete treatments" });
   }
-  const tr = await Treatment.findOneAndDelete({
+  const tr = await Treatment.findOne({
     _id: req.params.id,
     dentist: clinicId(req.user),
   });
   if (!tr) return res.status(404).json({ message: "Treatment not found" });
+  tr.deletedAt = new Date();
+  tr.deletedBy = req.user._id;
+  await tr.save();
   res.json({ message: "Deleted" });
 });
 

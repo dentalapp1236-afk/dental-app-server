@@ -25,9 +25,32 @@ const appointmentSchema = new mongoose.Schema(
     remind24hSent: { type: Boolean, default: false }, // ~24h-before reminder sent
     remind12hSent: { type: Boolean, default: false }, // ~12h-before reminder sent
     remind1hSent: { type: Boolean, default: false }, // ~1h-before reminder sent
+
+    // Audit trail: who actually performed each action (may be an assistant
+    // acting on the dentist's behalf — distinct from `dentist`, which is always
+    // the clinic this appointment belongs to).
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    // Soft delete: a deleted appointment is never physically removed, so it can
+    // still be traced back (who deleted it, when) instead of vanishing without
+    // a trace. Every normal query excludes these via the pre-find hook below.
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true }
 );
+
+// Exclude soft-deleted rows from every ordinary read, unless a query
+// explicitly filters on deletedAt itself (so this hook doesn't fight, say, an
+// admin/maintenance script that deliberately wants to see deleted rows).
+function excludeDeleted(next) {
+  if (this.getFilter().deletedAt === undefined) {
+    this.where({ deletedAt: null });
+  }
+  next();
+}
+appointmentSchema.pre(/^find/, excludeDeleted);
+appointmentSchema.pre("countDocuments", excludeDeleted);
 
 // Make duplicate bookings impossible at the database level: a dentist can have
 // at most ONE scheduled appointment at a given instant. Even if two requests
