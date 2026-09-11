@@ -237,7 +237,10 @@ router.post("/", async (req, res) => {
     }).sort({ createdAt: -1 });
     if (existing) {
       if (Date.now() - new Date(existing.createdAt).getTime() < 15000) {
-        return res.status(201).json(existing); // retry / double-submit
+        // Flag this as an echo of an existing record, not a fresh create, so the
+        // client doesn't double-count it in analytics (it already tracked the
+        // first, successful request).
+        return res.status(201).json({ ...existing.toObject(), _retry: true });
       }
       if (!force) {
         return res.status(409).json({
@@ -379,7 +382,9 @@ router.post("/:id/payments", async (req, res) => {
         sameDay;
       const recentlyAdded = Date.now() - lastPayment._id.getTimestamp().getTime() < 15000;
       if (isMatch && recentlyAdded) {
-        return res.status(201).json(tr); // retry / double-submit
+        // Same flag as the treatment route above: this is an echo, not a new
+        // payment, so the client shouldn't track it again.
+        return res.status(201).json({ ...tr.toObject(), _retry: true });
       }
     }
 
