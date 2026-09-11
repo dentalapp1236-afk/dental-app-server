@@ -362,6 +362,27 @@ router.post("/:id/payments", async (req, res) => {
         .json({ message: `Amount cannot exceed the remaining balance (${tr.balance}).` });
     }
 
+    // Duplicate-submit guard: a rapid double-click or a network retry can fire this
+    // request twice for the same intended payment. If the most recently recorded
+    // payment on this treatment has identical amount/note/method/date and was added
+    // in the last 15s (derived from its ObjectId, since payment subdocs carry no
+    // separate timestamp), treat this as a retry and return the treatment as-is
+    // instead of pushing a second copy.
+    const lastPayment = tr.payments[tr.payments.length - 1];
+    if (lastPayment) {
+      const reqDate = new Date(req.body.date || new Date());
+      const sameDay = new Date(lastPayment.date).toDateString() === reqDate.toDateString();
+      const isMatch =
+        lastPayment.amount === amount &&
+        (lastPayment.note || "") === (req.body.note || "") &&
+        lastPayment.method === method &&
+        sameDay;
+      const recentlyAdded = Date.now() - lastPayment._id.getTimestamp().getTime() < 15000;
+      if (isMatch && recentlyAdded) {
+        return res.status(201).json(tr); // retry / double-submit
+      }
+    }
+
     tr.payments.push({ amount, note: req.body.note, method, date: req.body.date || new Date() });
     tr.paid = tr.paidAmount >= tr.cost && tr.cost > 0;
     await tr.save();
