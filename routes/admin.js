@@ -6,6 +6,7 @@ import Invoice from "../models/Invoice.js";
 import Engagement from "../models/Engagement.js";
 import { generateInvoicesOnce, DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
 import { protect, requireRole } from "../middleware/auth.js";
+import { notifyUser } from "../utils/notify.js";
 
 const router = express.Router();
 
@@ -279,6 +280,7 @@ router.patch("/invoices/:id", async (req, res) => {
     const inv = await Invoice.findById(req.params.id);
     if (!inv) return res.status(404).json({ message: "Invoice not found" });
     const { status, note } = req.body;
+    const justPaid = status === "paid" && inv.status !== "paid";
     if (status === "paid") {
       inv.status = "paid";
       inv.paidAt = new Date();
@@ -290,6 +292,20 @@ router.patch("/invoices/:id", async (req, res) => {
     }
     if (note !== undefined) inv.note = note;
     await inv.save();
+
+    // Thank the dentist when their subscription payment is marked collected
+    // (only on the actual unpaid -> paid transition, not a re-save).
+    if (justPaid) {
+      const dentist = await User.findById(inv.dentist).select("name email").catch(() => null);
+      notifyUser(inv.dentist, {
+        type: "invoice_paid",
+        title: "Payment collected — thank you!",
+        body: `Thank you${dentist?.name ? `, Dr. ${dentist.name}` : ""} for trusting our service! We've received your payment of ${inv.currency} ${inv.amount.toLocaleString()} for ${inv.month}.`,
+        url: "/invoices",
+        email: dentist?.email ? { to: dentist.email, greeting: `Hi Dr. ${dentist.name || ""},\n\n` } : null,
+      });
+    }
+
     res.json(inv);
   } catch (err) {
     console.error(err);
