@@ -2,6 +2,7 @@ import express from "express";
 import { runRemindersOnce } from "../jobs/reminders.js";
 import { runBalanceRemindersOnce } from "../jobs/balanceReminders.js";
 import { generateInvoicesOnce } from "../jobs/invoices.js";
+import { runBackupOnce } from "../jobs/backup.js";
 
 const router = express.Router();
 
@@ -47,5 +48,20 @@ const invoicesHandler = async (req, res) => {
 };
 router.get("/generate-invoices", invoicesHandler);
 router.post("/generate-invoices", invoicesHandler);
+
+// Daily database backup (safety net for the free Atlas tier, which has no
+// backup of its own). Safe to call as often as the scheduler likes.
+const backupHandler = async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ message: "Unauthorized" });
+  try {
+    const result = await runBackupOnce();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("[cron] backup run failed:", err?.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+router.get("/run-backup", backupHandler);
+router.post("/run-backup", backupHandler);
 
 export default router;
