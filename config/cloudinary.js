@@ -3,11 +3,14 @@ import { v2 as cloudinary } from "cloudinary";
 // Configure from the three split vars, or from a single CLOUDINARY_URL
 // (cloudinary://<api_key>:<api_secret>@<cloud_name>), which the SDK reads
 // automatically from the environment when present.
-if (process.env.CLOUDINARY_CLOUD_NAME) {
+// .trim() guards against a stray trailing space/newline from pasting the value
+// into a dashboard env var field (a common copy-paste artifact) — the SDK
+// rejects a cloud_name containing one with a fairly opaque "Invalid cloud_name" error.
+if (process.env.CLOUDINARY_CLOUD_NAME?.trim()) {
   cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME.trim(),
+    api_key: process.env.CLOUDINARY_API_KEY?.trim(),
+    api_secret: process.env.CLOUDINARY_API_SECRET?.trim(),
     secure: true,
   });
 }
