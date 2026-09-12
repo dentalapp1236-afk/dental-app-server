@@ -7,11 +7,18 @@
 // ever need this for real, run it once against a throwaway/dev database
 // (a different MONGO_URI) to make sure it behaves the way you expect.
 //
+// Backups are scoped per-database (see jobs/backup.js) so that production and
+// staging, sharing one Cloudinary account, never mix. By default this script
+// only looks at backups for whichever database your MONGO_URI/.env currently
+// points at — pass --db=<name> to look at a different one (e.g. to restore a
+// staging copy while connected to production for inspection).
+//
 // Usage (run from the dental-app-server folder, with your normal .env in place):
 //   node scripts/restoreBackup.js --list                     # list available backups
 //   node scripts/restoreBackup.js --latest                   # dry run: preview the newest backup
-//   node scripts/restoreBackup.js --public-id=db-backups/backup-2026-09-12T03-00-00-000Z
+//   node scripts/restoreBackup.js --public-id=db-backups/dental-clinic/backup-2026-09-12T03-00-00-000Z
 //   node scripts/restoreBackup.js --latest --apply            # ACTUALLY restore (asks to confirm)
+//   node scripts/restoreBackup.js --db=dental-clinic-staging --list
 import "dotenv/config";
 import zlib from "zlib";
 import { promisify } from "util";
@@ -27,6 +34,7 @@ const APPLY = process.argv.includes("--apply");
 const LIST = process.argv.includes("--list");
 const LATEST = process.argv.includes("--latest");
 const publicIdArg = process.argv.find((a) => a.startsWith("--public-id="))?.split("=")[1];
+const dbNameArg = process.argv.find((a) => a.startsWith("--db="))?.split("=")[1];
 
 const BACKUP_PREFIX = "db-backups";
 
@@ -35,14 +43,14 @@ function prompt(question) {
   return new Promise((resolve) => rl.question(question, (answer) => { rl.close(); resolve(answer); }));
 }
 
-async function listBackups() {
+async function listBackups(dbName) {
   const out = [];
   let cursor;
   do {
     const res = await cloudinary.api.resources({
       type: "authenticated",
       resource_type: "raw",
-      prefix: `${BACKUP_PREFIX}/`,
+      prefix: `${BACKUP_PREFIX}/${dbName}/`,
       max_results: 100,
       next_cursor: cursor,
     });
@@ -69,18 +77,26 @@ async function main() {
     process.exit(1);
   }
 
+  // Connect even for a dry run/list, purely to resolve which database's
+  // backups to look at by default (nothing is read from or written to it
+  // unless --apply is given later).
+  await connectDB();
+  const dbName = dbNameArg || mongoose.connection.db.databaseName;
+  console.log(`Looking at backups for database: ${dbName}\n`);
+
   if (LIST) {
-    const backups = await listBackups();
+    const backups = await listBackups(dbName);
     if (!backups.length) return console.log("No backups found.");
     for (const b of backups) {
       console.log(`${b.public_id}  ${(b.bytes / 1024).toFixed(0)} KB  ${b.created_at}`);
     }
+    await mongoose.connection.close();
     return;
   }
 
   let publicId = publicIdArg;
   if (LATEST || !publicId) {
-    const backups = await listBackups();
+    const backups = await listBackups(dbName);
     if (!backups.length) {
       console.error("No backups found to restore.");
       process.exit(1);
@@ -100,20 +116,21 @@ async function main() {
 
   if (!APPLY) {
     console.log("\nDry run only — nothing was changed. Re-run with --apply to actually restore.");
+    await mongoose.connection.close();
     return;
   }
 
   console.log(
     "\n⚠️  --apply will REPLACE every collection listed above in the CURRENT database " +
-      "with the contents of this backup (existing documents in those collections are deleted first)."
+      `(${dbName}) with the contents of this backup (existing documents in those collections are deleted first).`
   );
   const answer = await prompt('Type "RESTORE" to confirm, anything else to cancel: ');
   if (answer.trim() !== "RESTORE") {
     console.log("Cancelled — no changes made.");
+    await mongoose.connection.close();
     return;
   }
 
-  await connectDB();
   const db = mongoose.connection.db;
   for (const name of collections) {
     const docs = dump[name];

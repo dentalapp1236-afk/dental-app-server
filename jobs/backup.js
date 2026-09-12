@@ -36,8 +36,12 @@ export async function runBackupOnce() {
   const json = EJSON.stringify(dump);
   const gzipped = await gzip(Buffer.from(json, "utf8"));
 
+  // Keyed by the actual connected database name (not NODE_ENV, which could be
+  // misconfigured) — so production and staging, sharing one Cloudinary
+  // account, never mix their backups together under the same prefix.
+  const dbName = db.databaseName;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const publicId = `${BACKUP_PREFIX}/backup-${stamp}`;
+  const publicId = `${BACKUP_PREFIX}/${dbName}/backup-${stamp}`;
 
   // type: "authenticated" — this dump contains full patient PII (names,
   // phone numbers, medical notes), so it must NOT be reachable via a public
@@ -52,11 +56,11 @@ export async function runBackupOnce() {
   });
 
   console.log(`[backup] uploaded ${publicId} (${(gzipped.length / 1024).toFixed(0)} KB)`);
-  const pruned = await pruneOldBackups();
+  const pruned = await pruneOldBackups(dbName);
   return { ok: true, publicId, bytes: gzipped.length, pruned };
 }
 
-async function pruneOldBackups() {
+async function pruneOldBackups(dbName) {
   const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const toDelete = [];
   let cursor;
@@ -64,7 +68,7 @@ async function pruneOldBackups() {
     const res = await cloudinary.api.resources({
       type: "authenticated",
       resource_type: "raw",
-      prefix: `${BACKUP_PREFIX}/`,
+      prefix: `${BACKUP_PREFIX}/${dbName}/`,
       max_results: 100,
       next_cursor: cursor,
     });
