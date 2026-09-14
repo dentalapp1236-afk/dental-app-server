@@ -20,4 +20,16 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /api/invoices/unpaid-count -> how many of this clinic's invoices are
+// still unpaid. Cheap poll target for the Invoices nav-badge.
+router.get("/unpaid-count", async (req, res) => {
+  try {
+    const count = await Invoice.countDocuments({ dentist: req.user._id, status: { $ne: "paid" } });
+    res.json({ count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 export default router;

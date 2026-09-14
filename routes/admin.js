@@ -289,6 +289,10 @@ router.patch("/invoices/:id", async (req, res) => {
       inv.status = "unpaid";
       inv.paidAt = undefined;
       inv.markedBy = undefined;
+      // Reset reminder gating so a re-opened invoice starts nudging again
+      // promptly instead of waiting out a stale gate from before it was paid.
+      inv.dueSoonNotifiedAt = undefined;
+      inv.lastOverdueNotifiedAt = undefined;
     }
     if (note !== undefined) inv.note = note;
     await inv.save();

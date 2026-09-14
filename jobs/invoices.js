@@ -1,5 +1,6 @@
 import Invoice from "../models/Invoice.js";
 import User from "../models/User.js";
+import { notifyUser } from "../utils/notify.js";
 
 const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
 const CHECK_MS = 6 * 60 * 60 * 1000; // re-check a few times a day
@@ -10,6 +11,12 @@ export const DEFAULT_MONTHLY_FEE = Number(process.env.MONTHLY_FEE || 3000);
 
 const ISSUE_DAY = 5; // invoices go out on the 5th
 const DUE_DAY = 15; // payment due on the 15th
+const DUE_SOON_DAYS = 3; // remind this many days before the due date
+const OVERDUE_RENOTIFY_DAYS = 7; // re-nudge this often while still unpaid past due
+
+const money = (n, currency) => `${currency || "PKR"} ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
+const fmtDate = (d) =>
+  new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: CLINIC_TZ });
 
 // Today's date parts in the clinic timezone (the server runs in UTC).
 function clinicToday(d = new Date()) {
@@ -50,6 +57,17 @@ function monthsBetween(startYM, endYM) {
   return out;
 }
 
+async function notifyInvoice(inv, { title, body }) {
+  const dentist = await User.findById(inv.dentist).select("name email").catch(() => null);
+  await notifyUser(inv.dentist, {
+    type: "invoice_issued",
+    title,
+    body,
+    url: "/invoices",
+    email: dentist?.email ? { to: dentist.email, greeting: `Hi Dr. ${dentist.name || ""},\n\n` } : null,
+  });
+}
+
 // Create any invoices that are due but missing, for every clinic with a billing
 // start month. Idempotent (unique dentist+month index), so it can run often and
 // safely backfills months the server may have missed.
@@ -71,7 +89,7 @@ export async function generateInvoicesOnce() {
       if (month === today.ym && today.day < ISSUE_DAY) continue;
       if (await Invoice.exists({ dentist: d._id, month })) continue;
       try {
-        await Invoice.create({
+        const inv = await Invoice.create({
           dentist: d._id,
           month,
           amount: fee,
@@ -80,6 +98,10 @@ export async function generateInvoicesOnce() {
           status: "unpaid",
         });
         created += 1;
+        notifyInvoice(inv, {
+          title: "New invoice issued",
+          body: `Your invoice for ${month} (${money(inv.amount, inv.currency)}) is ready. Due by ${fmtDate(inv.dueDate)}.`,
+        }).catch((e) => console.error("[invoice] issue notify:", e?.message));
       } catch (e) {
         if (e?.code !== 11000) console.error("[invoice] create:", e?.message);
       }
@@ -89,12 +111,64 @@ export async function generateInvoicesOnce() {
   return created;
 }
 
+// Nudge dentists about an unpaid invoice as it approaches its due date, and
+// periodically while it sits overdue — nothing watched this before, so an
+// invoice could go unpaid indefinitely with no reminder at all.
+export async function sendInvoiceRemindersOnce() {
+  const now = new Date();
+  const dueSoonCutoff = new Date(now.getTime() + DUE_SOON_DAYS * 24 * 60 * 60 * 1000);
+
+  let dueSoonSent = 0;
+  const dueSoon = await Invoice.find({
+    status: "unpaid",
+    dueSoonNotifiedAt: { $exists: false },
+    dueDate: { $gt: now, $lte: dueSoonCutoff },
+  });
+  for (const inv of dueSoon) {
+    try {
+      await notifyInvoice(inv, {
+        title: "Invoice due soon",
+        body: `Your ${inv.month} invoice (${money(inv.amount, inv.currency)}) is due on ${fmtDate(inv.dueDate)}.`,
+      });
+      inv.dueSoonNotifiedAt = now;
+      await inv.save();
+      dueSoonSent += 1;
+    } catch (e) {
+      console.error("[invoice] due-soon notify:", e?.message);
+    }
+  }
+
+  let overdueSent = 0;
+  const renotifyCutoff = new Date(now.getTime() - OVERDUE_RENOTIFY_DAYS * 24 * 60 * 60 * 1000);
+  const overdue = await Invoice.find({
+    status: "unpaid",
+    dueDate: { $lt: now },
+    $or: [{ lastOverdueNotifiedAt: { $exists: false } }, { lastOverdueNotifiedAt: { $lt: renotifyCutoff } }],
+  });
+  for (const inv of overdue) {
+    try {
+      await notifyInvoice(inv, {
+        title: "Invoice overdue",
+        body: `Your ${inv.month} invoice (${money(inv.amount, inv.currency)}) was due on ${fmtDate(inv.dueDate)} and is still unpaid.`,
+      });
+      inv.lastOverdueNotifiedAt = now;
+      await inv.save();
+      overdueSent += 1;
+    } catch (e) {
+      console.error("[invoice] overdue notify:", e?.message);
+    }
+  }
+
+  return { dueSoonSent, overdueSent };
+}
+
 // In-process timer plus a run at startup (a managed cron hitting
 // /api/cron/generate-invoices covers free-tier instances that sleep).
 export function startInvoiceJob() {
-  generateInvoicesOnce().catch((e) => console.error("[invoice] error:", e?.message));
-  setInterval(
-    () => generateInvoicesOnce().catch((e) => console.error("[invoice] error:", e?.message)),
-    CHECK_MS
-  );
+  const run = () => {
+    generateInvoicesOnce().catch((e) => console.error("[invoice] error:", e?.message));
+    sendInvoiceRemindersOnce().catch((e) => console.error("[invoice] reminder error:", e?.message));
+  };
+  run();
+  setInterval(run, CHECK_MS);
 }

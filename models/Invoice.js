@@ -15,6 +15,12 @@ const invoiceSchema = new mongoose.Schema(
     paidAt: { type: Date },
     markedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // admin who marked it paid
     note: { type: String, trim: true },
+
+    // Reminder gating, mirroring the pattern used for appointment reminders
+    // (remind24hSent etc.) — so the due-date watcher never re-sends the same
+    // nudge on every run.
+    dueSoonNotifiedAt: { type: Date }, // "due in a few days" reminder, sent once
+    lastOverdueNotifiedAt: { type: Date }, // last "still unpaid, past due" nudge
   },
   { timestamps: true }
 );
