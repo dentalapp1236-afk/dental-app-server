@@ -285,7 +285,7 @@ router.get("/invoices/:id/pdf", async (req, res) => {
     const safeName = (dentist?.clinicName || dentist?.name || "clinic").replace(/[^a-z0-9]+/gi, "-");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="invoice-${inv.month}-${safeName}.pdf"`);
-    await renderInvoicePdf(res, { invoice: inv, dentist });
+    await renderInvoicePdf(res, { invoice: inv, dentist, issuedBy: req.user.name });
   } catch (err) {
     console.error(err);
     if (!res.headersSent) res.status(500).json({ message: "Server error" });
