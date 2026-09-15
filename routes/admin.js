@@ -7,6 +7,7 @@ import Engagement from "../models/Engagement.js";
 import { generateInvoicesOnce, DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
 import { protect, requireRole } from "../middleware/auth.js";
 import { notifyUser } from "../utils/notify.js";
+import { renderInvoicePdf } from "../utils/invoicePdf.js";
 
 const router = express.Router();
 
@@ -271,6 +272,23 @@ router.get("/invoices", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Download a single invoice as a PDF (e.g. to send to the clinic manually).
+router.get("/invoices/:id/pdf", async (req, res) => {
+  try {
+    const inv = await Invoice.findById(req.params.id).lean();
+    if (!inv) return res.status(404).json({ message: "Invoice not found" });
+    const dentist = await User.findById(inv.dentist).select("name email phone clinicName address");
+
+    const safeName = (dentist?.clinicName || dentist?.name || "clinic").replace(/[^a-z0-9]+/gi, "-");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="invoice-${inv.month}-${safeName}.pdf"`);
+    await renderInvoicePdf(res, { invoice: inv, dentist });
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) res.status(500).json({ message: "Server error" });
   }
 });
 
