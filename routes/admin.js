@@ -8,6 +8,7 @@ import { generateInvoicesOnce, DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
 import { protect, requireRole } from "../middleware/auth.js";
 import { notifyUser } from "../utils/notify.js";
 import { renderInvoicePdf } from "../utils/invoicePdf.js";
+import { getPaymentDetails } from "../config/paymentDetails.js";
 
 const router = express.Router();
 
@@ -260,6 +261,12 @@ router.post("/invoices/generate", async (req, res) => {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
+});
+
+// The platform's own bank account, shown alongside the invoice PDF so the
+// admin can quote/copy it without opening the PDF.
+router.get("/payment-details", (req, res) => {
+  res.json(getPaymentDetails());
 });
 
 // All invoices, newest month first.

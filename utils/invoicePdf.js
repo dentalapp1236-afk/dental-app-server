@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { DEFAULT_MONTHLY_FEE } from "../jobs/invoices.js";
+import { getPaymentDetails } from "../config/paymentDetails.js";
 
 const BLUE = "#1877f2";
 const INK = "#1c1e21";
@@ -138,9 +139,7 @@ export function renderInvoicePdf(stream, { invoice, dentist, issuedBy }) {
     y += 40;
 
     // ---- Payment details box ----
-    const bank = process.env.PAYMENT_BANK_NAME || "Allied Bank Limited";
-    const acctTitle = process.env.PAYMENT_ACCOUNT_TITLE || "Hamza Mansoor";
-    const acctNumber = process.env.PAYMENT_ACCOUNT_NUMBER || "04810010078559090018";
+    const { bankName: bank, accountTitle: acctTitle, accountNumber: acctNumber } = getPaymentDetails();
 
     const boxTop = y;
     const boxPad = 14;

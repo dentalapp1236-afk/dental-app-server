@@ -1,6 +1,7 @@
 import express from "express";
 import Invoice from "../models/Invoice.js";
 import { protect, requireRole } from "../middleware/auth.js";
+import { getPaymentDetails } from "../config/paymentDetails.js";
 
 const router = express.Router();
 
@@ -30,6 +31,12 @@ router.get("/unpaid-count", async (req, res) => {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
+});
+
+// GET /api/invoices/payment-details -> the platform's bank account, so the
+// dentist can pay without needing to open the PDF.
+router.get("/payment-details", (req, res) => {
+  res.json(getPaymentDetails());
 });
 
 export default router;
