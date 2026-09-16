@@ -26,6 +26,8 @@ import pushRoutes from "./routes/push.js";
 import cronRoutes from "./routes/cron.js";
 import uploadsRoutes from "./routes/uploads.js";
 import adminRoutes from "./routes/admin.js";
+import handoffRoutes from "./routes/handoff.js";
+import { retired } from "./middleware/retired.js";
 import { startAppointmentReminders } from "./jobs/reminders.js";
 import { startBalanceReminders } from "./jobs/balanceReminders.js";
 import { startInvoiceJob } from "./jobs/invoices.js";
@@ -118,6 +120,12 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Retirement kill switch — must sit in front of every route below it, so a
+// stale cached PWA build can't keep writing data after cutover. No-op unless
+// RETIRED=true.
+app.use("/api", retired);
+
+app.use("/api/handoff", handoffRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/staff", staffRoutes);
