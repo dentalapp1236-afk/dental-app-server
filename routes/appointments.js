@@ -133,6 +133,24 @@ const patientDayConflict = async (clientId, date, exceptId) => {
   return Appointment.findOne(query);
 };
 
+// A 409 the UI can act on instead of dead-ending at. Alongside the message we
+// hand back the appointment that is IN THE WAY — which one, when it is, and its
+// version — so staff can be offered "move it to the new time" in one tap rather
+// than having to go and find it themselves. The version comes along so that
+// one-tap move still goes through the same optimistic-concurrency check as a
+// hand-made edit.
+const dayConflictResponse = (res, conflict, message) =>
+  res.status(409).json({
+    message,
+    code: "PATIENT_DAY_TAKEN",
+    conflict: {
+      id: conflict._id,
+      date: conflict.date,
+      status: conflict.status,
+      version: conflict.__v,
+    },
+  });
+
 // A patient owns an appointment if it's theirs, or it's for a dependent they manage.
 const clientOwnsAppt = async (userId, appt) => {
   if (String(appt.client) === String(userId)) return true;
@@ -261,11 +279,9 @@ router.post("/", async (req, res) => {
         code: "SLOT_TAKEN",
       });
     }
-    if (await patientDayConflict(client, date)) {
-      return res.status(409).json({
-        message: "This patient already has an appointment on this day.",
-        code: "PATIENT_DAY_TAKEN",
-      });
+    const dayClash = await patientDayConflict(client, date);
+    if (dayClash) {
+      return dayConflictResponse(res, dayClash, "This patient already has an appointment on this day.");
     }
     const appt = await Appointment.create({
       dentist: dentistId,
@@ -523,11 +539,11 @@ router.put("/:id", async (req, res) => {
         code: "SLOT_TAKEN",
       });
     }
-    if (date && ACTIVE.includes(nextStatus) && (await patientDayConflict(current.client, date, current._id))) {
-      return res.status(409).json({
-        message: "This patient already has an appointment on this day.",
-        code: "PATIENT_DAY_TAKEN",
-      });
+    if (date && ACTIVE.includes(nextStatus)) {
+      const dayClash = await patientDayConflict(current.client, date, current._id);
+      if (dayClash) {
+        return dayConflictResponse(res, dayClash, "This patient already has an appointment on this day.");
+      }
     }
 
     const dateChanged =
