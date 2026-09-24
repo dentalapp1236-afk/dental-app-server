@@ -1,6 +1,7 @@
 import Invoice from "../models/Invoice.js";
 import User from "../models/User.js";
 import { notifyUser } from "../utils/notify.js";
+import { sendWhatsApp } from "../utils/whatsapp/index.js";
 
 const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
 const CHECK_MS = 6 * 60 * 60 * 1000; // re-check a few times a day
@@ -17,6 +18,16 @@ const OVERDUE_RENOTIFY_DAYS = 7; // re-nudge this often while still unpaid past 
 const money = (n, currency) => `${currency || "PKR"} ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: CLINIC_TZ });
+// "2026-09" -> "September 2026". Built in UTC so the label can't slip a month.
+const monthLabel = (ym) => {
+  const [y, m] = String(ym).split("-").map(Number);
+  if (!y || !m) return String(ym);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+};
 
 // Today's date parts in the clinic timezone (the server runs in UTC).
 function clinicToday(d = new Date()) {
@@ -57,8 +68,15 @@ function monthsBetween(startYM, endYM) {
   return out;
 }
 
-async function notifyInvoice(inv, { title, body }) {
-  const dentist = await User.findById(inv.dentist).select("name email").catch(() => null);
+// `whatsapp` is opt-in per call, not the default. This helper serves all three
+// invoice notices — issued, due soon, and the overdue nudge that repeats every
+// seven days — and only ONE of them is worth a WhatsApp. Sending on every one
+// would put a recurring message on the dentist's phone every week about an
+// invoice they already know about.
+async function notifyInvoice(inv, { title, body, whatsapp }) {
+  const dentist = await User.findById(inv.dentist)
+    .select("name email phoneE164 whatsappOptIn")
+    .catch(() => null);
   await notifyUser(inv.dentist, {
     type: "invoice_issued",
     title,
@@ -66,6 +84,23 @@ async function notifyInvoice(inv, { title, body }) {
     url: "/invoices",
     email: dentist?.email ? { to: dentist.email, greeting: `Hi Dr. ${dentist.name || ""},\n\n` } : null,
   });
+
+  if (whatsapp && dentist) {
+    await sendWhatsApp({
+      user: dentist,
+      template: "invoice_due",
+      values: {
+        dentistName: `Dr. ${dentist.name}`,
+        amount: money(inv.amount, inv.currency),
+        month: monthLabel(inv.month),
+        dueDate: fmtDate(inv.dueDate),
+      },
+      // One per invoice, so the weekly overdue nudge can never duplicate it
+      // even if someone later turns WhatsApp on for that path too.
+      dedupeKey: `invoice_due:${inv._id}`,
+      invoice: inv._id,
+    });
+  }
 }
 
 // Create any invoices that are due but missing, for every clinic with a billing
@@ -129,6 +164,7 @@ export async function sendInvoiceRemindersOnce() {
       await notifyInvoice(inv, {
         title: "Invoice due soon",
         body: `Your ${inv.month} invoice (${money(inv.amount, inv.currency)}) is due on ${fmtDate(inv.dueDate)}.`,
+        whatsapp: true,
       });
       inv.dueSoonNotifiedAt = now;
       await inv.save();

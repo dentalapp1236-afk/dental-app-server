@@ -7,6 +7,7 @@ import { sendPush } from "../utils/push.js";
 import { sendMail } from "../utils/mailer.js";
 import { protect, clinicId } from "../middleware/auth.js";
 import { notifyClinic } from "../utils/notify.js";
+import { sendWhatsApp } from "../utils/whatsapp/index.js";
 
 const router = express.Router();
 router.use(protect);
@@ -292,8 +293,12 @@ router.post("/", async (req, res) => {
       createdBy: req.user._id,
     });
     const populated = await appt.populate([
-      { path: "client", select: "name email phone managed guardian guardianName guardianEmail guardianPhone" },
-      { path: "dentist", select: "name email" },
+      {
+        path: "client",
+        select:
+          "name email phone managed guardian guardianName guardianEmail guardianPhone phoneE164 whatsappOptIn",
+      },
+      { path: "dentist", select: "name email clinicName phone" },
     ]);
 
     // Notify the patient (or the guardian, for a managed child) + give staff a WhatsApp link
@@ -313,6 +318,23 @@ router.post("/", async (req, res) => {
       email: t.email,
       data: { appointmentId: populated._id, canAcknowledge: true },
     });
+
+    // Same news over WhatsApp. Deliberately NOT awaited: sends are serialised
+    // behind a jittered throttle, so awaiting here would hold the HTTP response
+    // open for seconds while the queue drains. It never rejects; .catch is
+    // belt-and-braces, matching how sendMail is used elsewhere.
+    sendWhatsApp({
+      user: c,
+      template: "appointment_confirmed",
+      values: {
+        patientName: c.managed ? c.guardianName || c.name : c.name,
+        clinicName: populated.dentist?.clinicName || `Dr. ${dName}`,
+        when,
+        clinicPhone: populated.dentist?.phone,
+      },
+      dedupeKey: `appointment_confirmed:${populated._id}`,
+      appointment: populated._id,
+    }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
 
     const shareMessage = `Hi ${c.managed ? c.guardianName || "there" : c.name}, ${body}`;
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareMessage)}`;
@@ -570,8 +592,11 @@ router.put("/:id", async (req, res) => {
       { $set: set, $inc: { __v: 1 } },
       { new: true }
     )
-      .populate("client", "name email phone managed guardian guardianName guardianEmail")
-      .populate("dentist", "name email");
+      .populate(
+        "client",
+        "name email phone managed guardian guardianName guardianEmail phoneE164 whatsappOptIn"
+      )
+      .populate("dentist", "name email clinicName phone");
     if (!appt) {
       return res.status(409).json({
         message: "This appointment was just changed by someone else. Refresh and try again.",
@@ -592,6 +617,26 @@ router.put("/:id", async (req, res) => {
         url: "/client",
         email: t.email,
       });
+
+      // The dedupeKey carries the NEW time, not just the appointment id —
+      // otherwise moving the same appointment twice would send once and
+      // silently swallow the second change, which is the one the patient most
+      // needs to know about.
+      //
+      // Not awaited, for the same reason as the create path: the throttle queue
+      // must not hold the response open.
+      sendWhatsApp({
+        user: c,
+        template: "appointment_rescheduled",
+        values: {
+          patientName: c.managed ? c.guardianName || c.name : c.name,
+          clinicName: appt.dentist?.clinicName || `Dr. ${dName}`,
+          when: fmtWhen(appt.date),
+          clinicPhone: appt.dentist?.phone,
+        },
+        dedupeKey: `appointment_rescheduled:${appt._id}:${new Date(appt.date).toISOString()}`,
+        appointment: appt._id,
+      }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
     }
 
     res.json(appt);

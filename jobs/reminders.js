@@ -2,6 +2,7 @@ import Appointment from "../models/Appointment.js";
 import Notification from "../models/Notification.js";
 import { sendPush } from "../utils/push.js";
 import { sendMail } from "../utils/mailer.js";
+import { sendWhatsApp } from "../utils/whatsapp/index.js";
 
 const CHECK_MS = 15 * 60 * 1000; // check every 15 minutes
 
@@ -19,13 +20,18 @@ const fmtWhen = (d) =>
   });
 
 // Reminder windows: send once when the appointment first falls within each lead time.
+//
+// `whatsapp` is set on ONE window only, deliberately. In-app and email can
+// afford three nudges; WhatsApp cannot. Three messages per appointment from a
+// shared number reads as spam, drags down the number's standing and burns the
+// daily cap three times over for no extra benefit.
 const WINDOWS = [
-  { flag: "remind24hSent", ms: 24 * 60 * 60 * 1000, lead: "in about 24 hours" },
+  { flag: "remind24hSent", ms: 24 * 60 * 60 * 1000, lead: "in about 24 hours", whatsapp: true },
   { flag: "remind12hSent", ms: 12 * 60 * 60 * 1000, lead: "in about 12 hours" },
   { flag: "remind1hSent", ms: 60 * 60 * 1000, lead: "in about 1 hour" },
 ];
 
-async function sendWindow({ flag, ms, lead }) {
+async function sendWindow({ flag, ms, lead, whatsapp }) {
   const now = new Date();
   const cutoff = new Date(now.getTime() + ms);
 
@@ -34,8 +40,11 @@ async function sendWindow({ flag, ms, lead }) {
     [flag]: { $ne: true },
     date: { $gt: now, $lte: cutoff },
   })
-    .populate("client", "name email managed guardian guardianName guardianEmail")
-    .populate("dentist", "name");
+    .populate(
+      "client",
+      "name email managed guardian guardianName guardianEmail phoneE164 whatsappOptIn"
+    )
+    .populate("dentist", "name clinicName phone");
 
   for (const appt of due) {
     const c = appt.client;
@@ -79,6 +88,25 @@ async function sendWindow({ flag, ms, lead }) {
         text,
         html: text.replace(/\n/g, "<br/>"),
       }).catch((e) => console.error("[reminder] email:", e?.message));
+    }
+
+    // WhatsApp, on the 24-hour window only. Deliberately last and awaited but
+    // never able to throw — the flag below must still be set even if the
+    // WhatsApp session is down, or a dead session would replay every reminder
+    // on the next run.
+    if (whatsapp) {
+      await sendWhatsApp({
+        user: c,
+        template: "appointment_reminder",
+        values: {
+          patientName: c.managed ? c.guardianName || c.name : c.name,
+          clinicName: appt.dentist?.clinicName || `Dr. ${appt.dentist?.name}`,
+          when,
+          clinicPhone: appt.dentist?.phone,
+        },
+        dedupeKey: `appointment_reminder:${appt._id}`,
+        appointment: appt._id,
+      });
     }
 
     appt[flag] = true;
