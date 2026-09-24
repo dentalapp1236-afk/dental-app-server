@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import { toE164 } from "../utils/phone.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -31,6 +32,23 @@ const userSchema = new mongoose.Schema(
     // When the patient was last reminded about an outstanding treatment balance,
     // so the reminder job only fires every 15 days per patient.
     lastBalanceReminderAt: { type: Date },
+
+    // ---- WhatsApp ----
+    // The normalised, sendable form of whichever number we would actually
+    // message (the patient's own, or their guardian's for a dependent). Kept
+    // SEPARATE from `phone` on purpose: `phone` carries a sparse unique index
+    // and is a login credential, so rewriting it in place risks collisions and
+    // lockouts. This field is derived, disposable and safe to recompute.
+    phoneE164: { type: String, trim: true, index: true, sparse: true },
+
+    // Consent. Default false — opt IN, never opt out. With every clinic sending
+    // from one shared number we are the sender of record, so the obligation to
+    // hold this consent is ours, not the dentist's.
+    whatsappOptIn: { type: Boolean, default: false },
+    whatsappOptInAt: { type: Date },
+    // How consent was obtained, so it can be evidenced later: "registration",
+    // "profile", "clinic" (collected in person by staff), "import".
+    whatsappOptInSource: { type: String, trim: true },
 
     // How the user most recently accessed the app: true = installed PWA,
     // false = browser tab, undefined = unknown. Updated on login + each app open.
@@ -120,6 +138,15 @@ userSchema.index({ location: "2dsphere" });
 userSchema.pre("save", function (next) {
   if (this.phone === "" || this.phone === null) this.phone = undefined;
   if (this.email === "" || this.email === null) this.email = undefined;
+
+  // Keep the sendable form in step with whichever number we would actually
+  // message: a dependent has no phone of their own, so the guardian's is the
+  // real destination. Derived here rather than at send time so the value can be
+  // indexed, reported on and audited. Unreachable numbers store undefined,
+  // which is a meaningful answer — see utils/phone.js.
+  if (this.isModified("phone") || this.isModified("guardianPhone") || this.isModified("managed")) {
+    this.phoneE164 = toE164(this.managed ? this.guardianPhone : this.phone) || undefined;
+  }
   next();
 });
 
