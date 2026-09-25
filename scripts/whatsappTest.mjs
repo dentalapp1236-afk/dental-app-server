@@ -45,11 +45,23 @@ async function main() {
     process.exit(1);
   }
 
-  // A real template, so this exercises the same path production will.
+  // A real template, so this exercises the same path production will. `when`
+  // is formatted exactly as jobs/reminders.js formats it — the template
+  // already says "tomorrow", so passing "tomorrow at 4pm" here would print it
+  // twice and the test message wouldn't match what patients actually get.
+  const when = new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: process.env.CLINIC_TZ || "Asia/Karachi",
+  });
   const body = renderTemplate("appointment_reminder", {
     patientName: "there",
     clinicName: "Bright Smile Dental (TEST)",
-    when: "tomorrow at 4:00 PM",
+    when,
     clinicPhone: "0319 0041011",
   });
 
