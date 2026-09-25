@@ -1,0 +1,64 @@
+# WAHA on Render — the WhatsApp gateway the API talks to.
+#
+# This is a SEPARATE service from dental-app-server. It runs a prebuilt image,
+# holds the WhatsApp session, and is reached over HTTP via WAHA_URL.
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> point at this repo.
+# Then set the three secrets (marked `sync: false`) in the service's
+# Environment tab. They are never committed.
+
+services:
+  - type: web
+    name: waha
+    runtime: image
+    image:
+      # Pin a version once you have one that works. ":latest" means a surprise
+      # upgrade can land on a restart and break a paired session, and the fix
+      # is re-scanning a QR code on somebody's phone.
+      url: docker.io/devlikeapro/waha:latest
+
+    # Closest Render region to Pakistan. A Pakistani number linked from a US
+    # datacenter is a conspicuous fingerprint; Singapore is less so. This
+    # CANNOT be changed after the service is created.
+    region: singapore
+
+    # NOT free. Free has no persistent disk, and without one every restart
+    # wipes /app/.sessions and demands a fresh QR scan.
+    plan: starter
+
+    disk:
+      name: waha-sessions
+      # WAHA keeps the session credentials here. This is the whole reason the
+      # service costs money.
+      mountPath: /app/.sessions
+      sizeGB: 1
+
+    # Deliberately no healthCheckPath: a wrong path makes Render restart-loop
+    # the service, and a restart loop on a WhatsApp session is far worse than
+    # no health check. Render detects the open port by itself.
+
+    envVars:
+      - key: PORT
+        value: "3000"
+
+      # Baileys. No Chromium, so it fits in a Starter instance's memory.
+      - key: WHATSAPP_DEFAULT_ENGINE
+        value: NOWEB
+
+      # Bring the session back up by itself after a Render restart or deploy.
+      # Without this the container returns but the session sits STOPPED and
+      # every send fails silently until someone notices.
+      - key: WHATSAPP_RESTART_ALL_SESSIONS
+        value: "true"
+
+      # Secrets — set in the Render dashboard, never in this file.
+      # On Render the dashboard and Swagger are reachable from the public
+      # internet (unlike a VPS, where you would bind them to localhost), so
+      # these three strings are the only thing between anyone and your
+      # WhatsApp account. Use 32+ random characters for each.
+      - key: WAHA_API_KEY
+        sync: false
+      - key: WAHA_DASHBOARD_USERNAME
+        sync: false
+      - key: WAHA_DASHBOARD_PASSWORD
+        sync: false
