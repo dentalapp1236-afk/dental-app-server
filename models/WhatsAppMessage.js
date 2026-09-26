@@ -33,8 +33,8 @@ const whatsappMessageSchema = new mongoose.Schema(
       default: "queued",
       index: true,
     },
-    // Why we chose not to send: "no_number", "not_opted_in", "disabled",
-    // "rate_limited". Recorded rather than silently dropped, so a dentist
+    // Why we chose not to send: "no_number", "disabled", "rate_limited".
+    // Recorded rather than silently dropped, so a dentist
     // asking "why didn't my patient get it?" has an answer.
     skipReason: { type: String },
     error: { type: String },

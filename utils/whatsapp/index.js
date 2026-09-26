@@ -75,7 +75,7 @@ function logSkip(fields, reason) {
  * Send one templated WhatsApp message.
  *
  * @param {object}  o
- * @param {object}  o.user       recipient — needs _id, phoneE164, whatsappOptIn
+ * @param {object}  o.user       recipient — needs _id and phoneE164
  * @param {string}  o.template   key in templates.js
  * @param {object}  o.values     template parameters
  * @param {string} [o.dedupeKey] e.g. "appointment_reminder:<apptId>" — uniquely
@@ -116,11 +116,6 @@ export async function sendWhatsApp({ user, template, values, dedupeKey, appointm
       await logSkip(base, "no_number");
       return { sent: false, reason: "no_number" };
     }
-    if (!user?.whatsappOptIn) {
-      await logSkip(base, "not_opted_in");
-      return { sent: false, reason: "not_opted_in" };
-    }
-
     const cap = await underDailyCap();
     if (!cap.ok) {
       console.warn(`[whatsapp] 24h cap reached (${cap.used}/${DAILY_CAP}) — holding back ${template}`);

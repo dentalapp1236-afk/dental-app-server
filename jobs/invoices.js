@@ -68,14 +68,14 @@ function monthsBetween(startYM, endYM) {
   return out;
 }
 
-// `whatsapp` is opt-in per call, not the default. This helper serves all three
+// `whatsapp` is chosen per call, not the default. This helper serves all three
 // invoice notices — issued, due soon, and the overdue nudge that repeats every
 // seven days — and only ONE of them is worth a WhatsApp. Sending on every one
 // would put a recurring message on the dentist's phone every week about an
 // invoice they already know about.
 async function notifyInvoice(inv, { title, body, whatsapp }) {
   const dentist = await User.findById(inv.dentist)
-    .select("name email phoneE164 whatsappOptIn")
+    .select("name email phoneE164")
     .catch(() => null);
   await notifyUser(inv.dentist, {
     type: "invoice_issued",

@@ -41,14 +41,6 @@ const userSchema = new mongoose.Schema(
     // lockouts. This field is derived, disposable and safe to recompute.
     phoneE164: { type: String, trim: true, index: true, sparse: true },
 
-    // Consent. Default false — opt IN, never opt out. With every clinic sending
-    // from one shared number we are the sender of record, so the obligation to
-    // hold this consent is ours, not the dentist's.
-    whatsappOptIn: { type: Boolean, default: false },
-    whatsappOptInAt: { type: Date },
-    // How consent was obtained, so it can be evidenced later: "registration",
-    // "profile", "clinic" (collected in person by staff), "import".
-    whatsappOptInSource: { type: String, trim: true },
 
     // How the user most recently accessed the app: true = installed PWA,
     // false = browser tab, undefined = unknown. Updated on login + each app open.

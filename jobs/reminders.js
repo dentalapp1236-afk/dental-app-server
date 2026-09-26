@@ -42,7 +42,7 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
   })
     .populate(
       "client",
-      "name email managed guardian guardianName guardianEmail phoneE164 whatsappOptIn"
+      "name email managed guardian guardianName guardianEmail phoneE164"
     )
     .populate("dentist", "name clinicName phone");
 

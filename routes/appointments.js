@@ -296,7 +296,7 @@ router.post("/", async (req, res) => {
       {
         path: "client",
         select:
-          "name email phone managed guardian guardianName guardianEmail guardianPhone phoneE164 whatsappOptIn",
+          "name email phone managed guardian guardianName guardianEmail guardianPhone phoneE164",
       },
       { path: "dentist", select: "name email clinicName phone" },
     ]);
@@ -594,7 +594,7 @@ router.put("/:id", async (req, res) => {
     )
       .populate(
         "client",
-        "name email phone managed guardian guardianName guardianEmail phoneE164 whatsappOptIn"
+        "name email phone managed guardian guardianName guardianEmail phoneE164"
       )
       .populate("dentist", "name email clinicName phone");
     if (!appt) {
