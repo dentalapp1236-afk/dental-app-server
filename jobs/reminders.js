@@ -100,7 +100,7 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
         template: "appointment_reminder",
         values: {
           patientName: c.managed ? c.guardianName || c.name : c.name,
-          clinicName: appt.dentist?.clinicName || `Dr. ${appt.dentist?.name}`,
+          clinicName: appt.dentist?.clinicName || `Dr. ${appt.dentist?.name}'s clinic`,
           when,
           clinicPhone: appt.dentist?.phone,
         },

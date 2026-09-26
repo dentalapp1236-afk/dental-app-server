@@ -328,7 +328,7 @@ router.post("/", async (req, res) => {
       template: "appointment_confirmed",
       values: {
         patientName: c.managed ? c.guardianName || c.name : c.name,
-        clinicName: populated.dentist?.clinicName || `Dr. ${dName}`,
+        clinicName: populated.dentist?.clinicName || `Dr. ${dName}'s clinic`,
         when,
         clinicPhone: populated.dentist?.phone,
       },
@@ -631,7 +631,7 @@ router.put("/:id", async (req, res) => {
         template: "appointment_rescheduled",
         values: {
           patientName: c.managed ? c.guardianName || c.name : c.name,
-          clinicName: appt.dentist?.clinicName || `Dr. ${dName}`,
+          clinicName: appt.dentist?.clinicName || `Dr. ${dName}'s clinic`,
           when: fmtWhen(appt.date),
           clinicPhone: appt.dentist?.phone,
         },

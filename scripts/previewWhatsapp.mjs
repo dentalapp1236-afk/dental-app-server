@@ -89,7 +89,7 @@ async function main() {
 
   const v = {
     patientName: patient.managed ? patient.guardianName || patient.name : patient.name,
-    clinicName: dentist.clinicName || `Dr. ${dentist.name}`,
+    clinicName: dentist.clinicName || `Dr. ${dentist.name}'s clinic`,
     when,
     clinicPhone: dentist.phone,
   };
