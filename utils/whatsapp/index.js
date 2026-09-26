@@ -1,6 +1,6 @@
 import WhatsAppMessage from "../../models/WhatsAppMessage.js";
 import { toChatId } from "../phone.js";
-import { renderTemplate } from "./templates.js";
+import { renderTemplate, isUrgent } from "./templates.js";
 import * as waha from "./waha.js";
 
 // The one door every WhatsApp goes through. Callers never touch a driver.
@@ -22,10 +22,14 @@ const TEST_TO = (process.env.WHATSAPP_TEST_TO || "").trim();
 // Pacing. An unofficial session on a fresh number is fragile: a burst of 80
 // reminders at 08:00 is close to a guaranteed ban. Sends are serialised with a
 // randomised gap — randomised because a perfectly regular interval is itself a
-// bot signature — and capped over a rolling 24 hours so a warm-up can be run by
-// raising the cap gradually rather than by editing code.
-const MIN_GAP_MS = Number(process.env.WHATSAPP_MIN_GAP_MS || 4000);
-const JITTER_MS = Number(process.env.WHATSAPP_JITTER_MS || 4000);
+// bot signature, arguably more incriminating than speed — and capped over a
+// rolling 24 hours so a warm-up is run by raising the cap rather than editing
+// code.
+//
+// 30-60 seconds is WAHA's own guidance and is the floor, not a tuning knob.
+// Lower it and you are betting the number.
+const MIN_GAP_MS = Number(process.env.WHATSAPP_MIN_GAP_MS || 30000);
+const JITTER_MS = Number(process.env.WHATSAPP_JITTER_MS || 30000);
 const DAILY_CAP = Number(process.env.WHATSAPP_DAILY_CAP || 50);
 
 export const whatsappConfigured = ENABLED && driver.configured;
@@ -33,24 +37,54 @@ export const whatsappConfigured = ENABLED && driver.configured;
 console.log(
   `[whatsapp] enabled=${ENABLED} driver=${driver.driverName} configured=${driver.configured}` +
     (TEST_TO ? ` TEST MODE -> all messages go to ${TEST_TO}` : "") +
-    (whatsappConfigured ? ` cap=${DAILY_CAP}/24h gap=${MIN_GAP_MS}-${MIN_GAP_MS + JITTER_MS}ms` : "")
+    (whatsappConfigured
+      ? ` cap=${DAILY_CAP}/24h gap=${MIN_GAP_MS / 1000}-${(MIN_GAP_MS + JITTER_MS) / 1000}s`
+      : "")
 );
 
-// ---- serial queue with jittered pacing ----
-let queue = Promise.resolve();
+// ---- serial queue with jittered pacing and two priorities ----
+//
+// At 30-60s a send, a batch of reminders owns the queue for a long time. A
+// booking confirmation behind them would arrive after the patient has left the
+// clinic, so anything a person is actively waiting on goes in the urgent lane
+// and is taken first. Both lanes share the same pacing: jumping the queue
+// never means sending faster.
+const lanes = { urgent: [], normal: [] };
+let draining = false;
 let lastSentAt = 0;
 
-function schedule(fn) {
-  const run = async () => {
-    const gap = MIN_GAP_MS + Math.floor(Math.random() * JITTER_MS);
-    const wait = Math.max(0, lastSentAt + gap - Date.now());
-    if (wait) await new Promise((r) => setTimeout(r, wait));
-    lastSentAt = Date.now();
-    return fn();
-  };
-  // Both handlers are `run`, so one failed send can't stall the queue behind it.
-  queue = queue.then(run, run);
-  return queue;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function schedule(fn, urgent) {
+  return new Promise((resolve) => {
+    lanes[urgent ? "urgent" : "normal"].push({ fn, resolve });
+    drain();
+  });
+}
+
+async function drain() {
+  if (draining) return;
+  draining = true;
+  try {
+    for (;;) {
+      const task = lanes.urgent.shift() || lanes.normal.shift();
+      if (!task) break;
+      const gap = MIN_GAP_MS + Math.floor(Math.random() * JITTER_MS);
+      const wait = Math.max(0, lastSentAt + gap - Date.now());
+      if (wait) await sleep(wait);
+      lastSentAt = Date.now();
+      let result;
+      try {
+        result = await task.fn();
+      } catch (err) {
+        // One failed send must not stall everything queued behind it.
+        result = { ok: false, error: err?.message || String(err) };
+      }
+      task.resolve(result);
+    }
+  } finally {
+    draining = false;
+  }
 }
 
 async function underDailyCap() {
@@ -140,7 +174,7 @@ export async function sendWhatsApp({ user, template, values, dedupeKey, appointm
       throw e;
     }
 
-    const result = await schedule(() => driver.sendText(toChatId(to), text));
+    const result = await schedule(() => driver.sendText(toChatId(to), text), isUrgent(template));
 
     if (result.ok) {
       await WhatsAppMessage.updateOne(

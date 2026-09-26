@@ -22,8 +22,14 @@ const REPLY_FOOTER = (clinicPhone) =>
     ? `\n\nTo change or cancel, please call the clinic on ${clinicPhone}. This number doesn't take replies.`
     : `\n\nTo change or cancel, please contact your clinic. This number doesn't take replies.`;
 
+// `urgent` marks the messages a person is waiting on. Sends are spaced 30-60
+// seconds apart to avoid a block, so a batch of reminders can occupy the queue
+// for half an hour — and a booking confirmation arriving 30 minutes after the
+// booking is worse than useless. Urgent messages jump that queue; the batch
+// jobs, which nobody is watching, wait their turn.
 export const TEMPLATES = {
   appointment_confirmed: {
+    urgent: true,
     params: ["patientName", "clinicName", "when", "clinicPhone"],
     render: (v) =>
       `Hello ${v.patientName}, your appointment at ${v.clinicName} is confirmed for ${v.when}.` +
@@ -38,6 +44,7 @@ export const TEMPLATES = {
   },
 
   appointment_rescheduled: {
+    urgent: true,
     params: ["patientName", "clinicName", "when", "clinicPhone"],
     render: (v) =>
       `Hello ${v.patientName}, your appointment at ${v.clinicName} has been moved to ${v.when}.` +
@@ -66,3 +73,6 @@ export function renderTemplate(name, values = {}) {
   }
   return tpl.render(values);
 }
+
+// Is anyone actually waiting on this message right now?
+export const isUrgent = (name) => !!TEMPLATES[name]?.urgent;
