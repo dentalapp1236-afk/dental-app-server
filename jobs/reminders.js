@@ -106,6 +106,8 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
         },
         dedupeKey: `appointment_reminder:${appt._id}`,
         appointment: appt._id,
+        // Never send a reminder after the appointment it is reminding about.
+        expiresAt: appt.date,
       });
     }
 

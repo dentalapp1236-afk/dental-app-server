@@ -334,6 +334,7 @@ router.post("/", async (req, res) => {
       },
       dedupeKey: `appointment_confirmed:${populated._id}`,
       appointment: populated._id,
+      expiresAt: date,
     }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
 
     const shareMessage = `Hi ${c.managed ? c.guardianName || "there" : c.name}, ${body}`;
@@ -636,6 +637,7 @@ router.put("/:id", async (req, res) => {
         },
         dedupeKey: `appointment_rescheduled:${appt._id}:${new Date(appt.date).toISOString()}`,
         appointment: appt._id,
+        expiresAt: appt.date,
       }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
     }
 

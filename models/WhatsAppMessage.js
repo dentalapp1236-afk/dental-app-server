@@ -27,12 +27,34 @@ const whatsappMessageSchema = new mongoose.Schema(
     // Sparse so ad-hoc sends without one are still allowed.
     dedupeKey: { type: String, unique: true, sparse: true },
 
+    // Lifecycle: queued -> sending -> sent -> delivered -> read, or failed.
+    // "sending" exists so a row can be claimed atomically by the worker; two
+    // ticks can never pick up the same message.
     status: {
       type: String,
-      enum: ["queued", "sent", "delivered", "read", "failed", "skipped"],
+      enum: ["queued", "sending", "sent", "delivered", "read", "failed", "skipped"],
       default: "queued",
       index: true,
     },
+
+    // Someone is actively waiting on this one (a booking confirmation), so it
+    // goes ahead of the batch traffic. At 30-60s a send, a reminder run owns
+    // the queue for half an hour.
+    urgent: { type: Boolean, default: false },
+
+    // Retry accounting. A WAHA hiccup or a dropped socket should not cost a
+    // patient their reminder, but nor should a permanently bad number be
+    // retried forever.
+    attempts: { type: Number, default: 0 },
+    lastAttemptAt: { type: Date },
+    // Set when the worker claims the row; used to reclaim rows abandoned by a
+    // process that died mid-send.
+    claimedAt: { type: Date },
+
+    // Past this, sending does more harm than good — a reminder that lands
+    // after the appointment is worse than no reminder. Left unset for
+    // messages that never go stale.
+    expiresAt: { type: Date },
     // Why we chose not to send: "no_number", "disabled", "rate_limited".
     // Recorded rather than silently dropped, so a dentist
     // asking "why didn't my patient get it?" has an answer.
@@ -53,5 +75,7 @@ const whatsappMessageSchema = new mongoose.Schema(
 // The dashboard reads newest-first, usually filtered by how it went.
 whatsappMessageSchema.index({ createdAt: -1 });
 whatsappMessageSchema.index({ status: 1, createdAt: -1 });
+// The worker's claim query: pending work, urgent first, then oldest.
+whatsappMessageSchema.index({ status: 1, urgent: -1, createdAt: 1 });
 
 export default mongoose.model("WhatsAppMessage", whatsappMessageSchema);
