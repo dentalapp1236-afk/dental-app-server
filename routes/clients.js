@@ -2,6 +2,8 @@ import express from "express";
 import crypto from "crypto";
 import User from "../models/User.js";
 import Association from "../models/Association.js";
+import { applyWhatsappConsent, whatsappConsentOps } from "../utils/whatsapp/consent.js";
+import { toE164 } from "../utils/phone.js";
 import { sendMail } from "../utils/mailer.js";
 import { protect, requireRole, clinicId } from "../middleware/auth.js";
 
@@ -64,6 +66,10 @@ router.post("/", async (req, res) => {
         password: crypto.randomBytes(24).toString("hex"), // random → no usable login
         dentist: owningDentistId,
       });
+      // A dependent's WhatsApp goes to the guardian, so it is the guardian who
+      // consents — staff record it here when they collect it at the clinic.
+      applyWhatsappConsent(child, req.body.whatsappOptIn, "clinic");
+      if (child.isModified()) await child.save();
       await Association.create({
         client: child._id,
         dentist: owningDentistId,
@@ -119,6 +125,8 @@ router.post("/", async (req, res) => {
       dateOfBirth,
       dentist: owningDentistId,
     });
+    applyWhatsappConsent(client, req.body.whatsappOptIn, "clinic");
+    if (client.isModified()) await client.save();
 
     // Record the (already-approved) association created by the clinic
     await Association.create({
@@ -206,6 +214,7 @@ router.put("/:id", async (req, res) => {
       if (gPhone !== undefined) existing.guardianPhone = gPhone;
       if (req.body.guardianEmail !== undefined)
         existing.guardianEmail = req.body.guardianEmail?.trim().toLowerCase() || undefined;
+      applyWhatsappConsent(existing, req.body.whatsappOptIn, "clinic");
       await existing.save();
       return res.json(existing);
     }
@@ -219,11 +228,26 @@ router.put("/:id", async (req, res) => {
       if (phoneExists) return res.status(409).json({ message: "Phone already in use" });
     }
 
-    // findOneAndUpdate bypasses the save hook, so clear empty phones explicitly
-    const update = { name, dateOfBirth, address, medicalNotes };
-    const ops = trimmedPhone
-      ? { $set: { ...update, phone: trimmedPhone } }
-      : { $set: update, $unset: { phone: "" } };
+    // findOneAndUpdate bypasses the save hook, so everything the hook would
+    // have done has to be done by hand here: clearing an empty phone, and
+    // keeping phoneE164 in step. Miss the second and a patient who corrects
+    // their number keeps receiving WhatsApps on the old one — or stops
+    // receiving them entirely — with nothing to show why.
+    const consent = whatsappConsentOps(existing.whatsappOptIn, req.body.whatsappOptIn, "clinic");
+    const e164 = trimmedPhone ? toE164(trimmedPhone) : null;
+
+    const set = { name, dateOfBirth, address, medicalNotes, ...consent.set };
+    const unset = { ...consent.unset };
+    if (trimmedPhone) set.phone = trimmedPhone;
+    else unset.phone = "";
+    if (e164) set.phoneE164 = e164;
+    else unset.phoneE164 = "";
+
+    // Assembled conditionally: MongoDB rejects an empty $unset outright, and
+    // whether either object ends up empty depends on the request.
+    const ops = {};
+    if (Object.keys(set).length) ops.$set = set;
+    if (Object.keys(unset).length) ops.$unset = unset;
 
     const client = await User.findOneAndUpdate(
       { _id: req.params.id, role: "client", dentist: clinicId(req.user) },

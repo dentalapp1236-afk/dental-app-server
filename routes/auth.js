@@ -2,6 +2,7 @@ import express from "express";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { applyWhatsappConsent } from "../utils/whatsapp/consent.js";
 import LoginEvent from "../models/LoginEvent.js";
 import { protect, requireStaff, clinicId } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -332,6 +333,11 @@ router.put("/me", protect, async (req, res) => {
         u.phone = undefined;
       }
     }
+
+    // Anyone can set their own WhatsApp preference — patients for reminders,
+    // dentists for invoice notices. Source is "profile" so it can be told
+    // apart later from consent a clinic recorded on someone's behalf.
+    applyWhatsappConsent(u, b.whatsappOptIn, "profile");
 
     if (u.role === "client") {
       if (b.dateOfBirth !== undefined) u.dateOfBirth = b.dateOfBirth || undefined;
