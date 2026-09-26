@@ -4,8 +4,12 @@
 // messaging your own number, to prove the plumbing works.
 //
 // Usage (from dental-app-server, with WAHA_URL / WAHA_API_KEY set):
-//   node scripts/whatsappTest.mjs                      # session status only
-//   node scripts/whatsappTest.mjs +923001234567        # status, then one message
+//   node scripts/whatsappTest.mjs                              # session status only
+//   node scripts/whatsappTest.mjs +923001234567                # reminder (default)
+//   node scripts/whatsappTest.mjs +923001234567 <template>     # any template
+//
+// Templates: appointment_confirmed, appointment_reminder,
+//            appointment_rescheduled, invoice_due
 //
 import "dotenv/config";
 import { sendText, sessionStatus, configured } from "../utils/whatsapp/waha.js";
@@ -13,6 +17,57 @@ import { toE164, toChatId } from "../utils/phone.js";
 import { renderTemplate } from "../utils/whatsapp/templates.js";
 
 const target = process.argv[2];
+const template = process.argv[3] || "appointment_reminder";
+
+// Dates formatted exactly as the jobs and routes format them, so what arrives
+// on your phone is the wording a patient would actually get — not an
+// approximation of it.
+const fmtWhen = (d) =>
+  new Date(d).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: process.env.CLINIC_TZ || "Asia/Karachi",
+  });
+const fmtDate = (d) =>
+  new Date(d).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: process.env.CLINIC_TZ || "Asia/Karachi",
+  });
+
+const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+const SAMPLES = {
+  appointment_confirmed: {
+    patientName: "there",
+    clinicName: "Bright Smile Dental (TEST)",
+    when: fmtWhen(tomorrow),
+    clinicPhone: "0319 0041011",
+  },
+  appointment_reminder: {
+    patientName: "there",
+    clinicName: "Bright Smile Dental (TEST)",
+    when: fmtWhen(tomorrow),
+    clinicPhone: "0319 0041011",
+  },
+  appointment_rescheduled: {
+    patientName: "there",
+    clinicName: "Bright Smile Dental (TEST)",
+    when: fmtWhen(tomorrow),
+    clinicPhone: "0319 0041011",
+  },
+  invoice_due: {
+    dentistName: "Dr Ahmad Shamim",
+    amount: "PKR 3,000",
+    month: "September 2026",
+    dueDate: fmtDate(tomorrow),
+  },
+};
 
 async function main() {
   console.log(`\nWAHA_URL     : ${process.env.WAHA_URL || "(not set)"}`);
@@ -45,26 +100,16 @@ async function main() {
     process.exit(1);
   }
 
-  // A real template, so this exercises the same path production will. `when`
-  // is formatted exactly as jobs/reminders.js formats it — the template
-  // already says "tomorrow", so passing "tomorrow at 4pm" here would print it
-  // twice and the test message wouldn't match what patients actually get.
-  const when = new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: process.env.CLINIC_TZ || "Asia/Karachi",
-  });
-  const body = renderTemplate("appointment_reminder", {
-    patientName: "there",
-    clinicName: "Bright Smile Dental (TEST)",
-    when,
-    clinicPhone: "0319 0041011",
-  });
+  const values = SAMPLES[template];
+  if (!values) {
+    console.error(
+      `\nUnknown template "${template}". Available: ${Object.keys(SAMPLES).join(", ")}\n`
+    );
+    process.exit(1);
+  }
+  const body = renderTemplate(template, values);
 
+  console.log(`\nTemplate    : ${template}`);
   console.log(`\nSending to ${e164} (${toChatId(e164)}):\n\n${body}\n`);
   const result = await sendText(toChatId(e164), body);
   console.log(result.ok ? `Sent. id=${result.id}\n` : `FAILED: ${result.error}\n`);
