@@ -3,6 +3,7 @@ import Notification from "../models/Notification.js";
 import { sendPush } from "../utils/push.js";
 import { sendMail } from "../utils/mailer.js";
 import { sendWhatsApp } from "../utils/whatsapp/index.js";
+import WhatsAppMessage from "../models/WhatsAppMessage.js";
 
 const CHECK_MS = 15 * 60 * 1000; // check every 15 minutes
 
@@ -20,18 +21,13 @@ const fmtWhen = (d) =>
   });
 
 // Reminder windows: send once when the appointment first falls within each lead time.
-//
-// `whatsapp` is set on ONE window only, deliberately. In-app and email can
-// afford three nudges; WhatsApp cannot. Three messages per appointment from a
-// shared number reads as spam, drags down the number's standing and burns the
-// daily cap three times over for no extra benefit.
 const WINDOWS = [
-  { flag: "remind24hSent", ms: 24 * 60 * 60 * 1000, lead: "in about 24 hours", whatsapp: true },
+  { flag: "remind24hSent", ms: 24 * 60 * 60 * 1000, lead: "in about 24 hours" },
   { flag: "remind12hSent", ms: 12 * 60 * 60 * 1000, lead: "in about 12 hours" },
   { flag: "remind1hSent", ms: 60 * 60 * 1000, lead: "in about 1 hour" },
 ];
 
-async function sendWindow({ flag, ms, lead, whatsapp }) {
+async function sendWindow({ flag, ms, lead }) {
   const now = new Date();
   const cutoff = new Date(now.getTime() + ms);
 
@@ -90,30 +86,71 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
       }).catch((e) => console.error("[reminder] email:", e?.message));
     }
 
-    // WhatsApp, on the 24-hour window only. Deliberately last and awaited but
-    // never able to throw — the flag below must still be set even if the
-    // WhatsApp session is down, or a dead session would replay every reminder
-    // on the next run.
-    if (whatsapp) {
-      await sendWhatsApp({
-        user: c,
-        template: "appointment_reminder",
-        values: {
-          patientName: c.managed ? c.guardianName || c.name : c.name,
-          dentistName: appt.dentist?.name ? `Dr. ${appt.dentist.name}` : "your dentist",
-          when,
-        },
-        dedupeKey: `appointment_reminder:${appt._id}`,
-        appointment: appt._id,
-        // Never send a reminder after the appointment it is reminding about.
-        expiresAt: appt.date,
-      });
-    }
-
     appt[flag] = true;
     await appt.save();
   }
   return due.length;
+}
+
+// WhatsApp reminders run as their OWN pass, not inside the flag-gated loop
+// above.
+//
+// That loop sets remind24hSent whether or not the WhatsApp got out — correct
+// for push and email, because a dead WhatsApp session must not replay those.
+// But it meant a WhatsApp skipped for ANY reason was skipped forever: during
+// the window between deploying this feature and backfilling phoneE164, every
+// reminder was marked sent while no WhatsApp was ever queued.
+//
+// WhatsApp needs no flag. The dedupeKey already makes it idempotent, so this
+// pass can simply reconsider every appointment in the window on every run and
+// the ones already handled are filtered out. That makes it self-healing: a
+// reminder missed because a number was not yet normalised, or because the
+// session was down, is picked up on a later run instead of being lost.
+//
+// One bulk query finds what has already been queued, rather than attempting N
+// inserts and letting the unique index reject them.
+const WHATSAPP_LEAD_MS = 24 * 60 * 60 * 1000;
+
+async function sendWhatsappReminders() {
+  const now = new Date();
+  const due = await Appointment.find({
+    status: "scheduled",
+    date: { $gt: now, $lte: new Date(now.getTime() + WHATSAPP_LEAD_MS) },
+  })
+    .populate("client", "name managed guardianName phoneE164")
+    .populate("dentist", "name");
+  if (!due.length) return 0;
+
+  const keys = due.map((a) => `appointment_reminder:${a._id}`);
+  const already = new Set(
+    (await WhatsAppMessage.find({ dedupeKey: { $in: keys } }).select("dedupeKey").lean()).map(
+      (m) => m.dedupeKey
+    )
+  );
+
+  let queued = 0;
+  for (const appt of due) {
+    const key = `appointment_reminder:${appt._id}`;
+    if (already.has(key)) continue;
+    const c = appt.client;
+    if (!c?.phoneE164) continue; // logged as a skip by sendWhatsApp on a later run
+    const r = await sendWhatsApp({
+      user: c,
+      template: "appointment_reminder",
+      values: {
+        patientName: c.managed ? c.guardianName || c.name : c.name,
+        dentistName: appt.dentist?.name ? `Dr. ${appt.dentist.name}` : "your dentist",
+        when: fmtWhen(appt.date),
+      },
+      dedupeKey: key,
+      appointment: appt._id,
+      // Never send a reminder after the appointment it is reminding about.
+      expiresAt: appt.date,
+    });
+    if (r.queued) queued += 1;
+  }
+  if (queued) console.log(`[reminder] queued ${queued} WhatsApp reminder(s)`);
+  return queued;
 }
 
 // Send the 12-hour and 1-hour reminders for scheduled appointments.
@@ -123,6 +160,9 @@ export async function runRemindersOnce() {
   for (const w of WINDOWS) {
     total += await sendWindow(w);
   }
+  await sendWhatsappReminders().catch((e) =>
+    console.error("[reminder] whatsapp:", e?.message)
+  );
   if (total) console.log(`[reminder] sent ${total} appointment reminder(s)`);
   return total;
 }
