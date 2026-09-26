@@ -10,9 +10,10 @@
 //
 // Two rules every body follows, both forced on us by sending from ONE shared
 // number on behalf of every clinic:
-//   1. Name the clinic in the first line. The message arrives from
+//   1. Name the dentist in the first line. The message arrives from
 //      "MyDentalBooking", not from the patient's own dentist, so without this
-//      the patient has no idea who is contacting them.
+//      the patient has no idea who is contacting them. Note the preposition:
+//      an appointment is WITH a person, AT a place.
 //   2. Say plainly that replies go nowhere. Patients will otherwise answer
 //      these, and nobody is reading that inbox.
 
@@ -27,24 +28,24 @@ const FOOTER =
 export const TEMPLATES = {
   appointment_confirmed: {
     urgent: true,
-    params: ["patientName", "clinicName", "when"],
+    params: ["patientName", "dentistName", "when"],
     render: (v) =>
-      `Hello ${v.patientName}, your appointment at ${v.clinicName} is confirmed for ${v.when}.` +
+      `Hello ${v.patientName}, your appointment with ${v.dentistName} is confirmed for ${v.when}.` +
       FOOTER,
   },
 
   appointment_reminder: {
-    params: ["patientName", "clinicName", "when"],
+    params: ["patientName", "dentistName", "when"],
     render: (v) =>
-      `Hello ${v.patientName}, a reminder that your appointment at ${v.clinicName} is tomorrow, ${v.when}.` +
+      `Hello ${v.patientName}, a reminder that your appointment with ${v.dentistName} is tomorrow, ${v.when}.` +
       FOOTER,
   },
 
   appointment_rescheduled: {
     urgent: true,
-    params: ["patientName", "clinicName", "when"],
+    params: ["patientName", "dentistName", "when"],
     render: (v) =>
-      `Hello ${v.patientName}, your appointment at ${v.clinicName} has been moved to ${v.when}.` +
+      `Hello ${v.patientName}, your appointment with ${v.dentistName} has been moved to ${v.when}.` +
       FOOTER,
   },
 

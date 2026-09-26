@@ -45,17 +45,17 @@ const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
 const SAMPLES = {
   appointment_confirmed: {
     patientName: "there",
-    clinicName: "Bright Smile Dental (TEST)",
+    dentistName: "Dr. Ahmad Shamim (TEST)",
     when: fmtWhen(tomorrow),
   },
   appointment_reminder: {
     patientName: "there",
-    clinicName: "Bright Smile Dental (TEST)",
+    dentistName: "Dr. Ahmad Shamim (TEST)",
     when: fmtWhen(tomorrow),
   },
   appointment_rescheduled: {
     patientName: "there",
-    clinicName: "Bright Smile Dental (TEST)",
+    dentistName: "Dr. Ahmad Shamim (TEST)",
     when: fmtWhen(tomorrow),
   },
   invoice_due: {

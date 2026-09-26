@@ -44,7 +44,7 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
       "client",
       "name email managed guardian guardianName guardianEmail phoneE164"
     )
-    .populate("dentist", "name clinicName");
+    .populate("dentist", "name");
 
   for (const appt of due) {
     const c = appt.client;
@@ -100,7 +100,7 @@ async function sendWindow({ flag, ms, lead, whatsapp }) {
         template: "appointment_reminder",
         values: {
           patientName: c.managed ? c.guardianName || c.name : c.name,
-          clinicName: appt.dentist?.clinicName || `Dr. ${appt.dentist?.name}'s clinic`,
+          dentistName: appt.dentist?.name ? `Dr. ${appt.dentist.name}` : "your dentist",
           when,
         },
         dedupeKey: `appointment_reminder:${appt._id}`,

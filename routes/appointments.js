@@ -298,7 +298,7 @@ router.post("/", async (req, res) => {
         select:
           "name email phone managed guardian guardianName guardianEmail guardianPhone phoneE164",
       },
-      { path: "dentist", select: "name email clinicName" },
+      { path: "dentist", select: "name email" },
     ]);
 
     // Notify the patient (or the guardian, for a managed child) + give staff a WhatsApp link
@@ -328,7 +328,7 @@ router.post("/", async (req, res) => {
       template: "appointment_confirmed",
       values: {
         patientName: c.managed ? c.guardianName || c.name : c.name,
-        clinicName: populated.dentist?.clinicName || `Dr. ${dName}'s clinic`,
+        dentistName: `Dr. ${dName}`,
         when,
       },
       dedupeKey: `appointment_confirmed:${populated._id}`,
@@ -596,7 +596,7 @@ router.put("/:id", async (req, res) => {
         "client",
         "name email phone managed guardian guardianName guardianEmail phoneE164"
       )
-      .populate("dentist", "name email clinicName");
+      .populate("dentist", "name email");
     if (!appt) {
       return res.status(409).json({
         message: "This appointment was just changed by someone else. Refresh and try again.",
@@ -630,7 +630,7 @@ router.put("/:id", async (req, res) => {
         template: "appointment_rescheduled",
         values: {
           patientName: c.managed ? c.guardianName || c.name : c.name,
-          clinicName: appt.dentist?.clinicName || `Dr. ${dName}'s clinic`,
+          dentistName: `Dr. ${dName}`,
           when: fmtWhen(appt.date),
         },
         dedupeKey: `appointment_rescheduled:${appt._id}:${new Date(appt.date).toISOString()}`,

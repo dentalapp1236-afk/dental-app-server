@@ -4,9 +4,9 @@
 // safe to point at production. Use it to check the wording before go-live, and
 // afterwards whenever a template changes.
 //
-// One field is worth checking specifically, because it comes from the
-// dentist's own profile and changes what the patient reads: clinicName, which
-// falls back to "Dr. <name>'s clinic" when the dentist never set one.
+// Patients are told the DENTIST's name, not the clinic's — an appointment is
+// with a person. Nothing here depends on a profile field the dentist might
+// have left blank.
 //
 // Usage (from dental-app-server):
 //   node scripts/previewWhatsapp.mjs                 # first dentist found
@@ -43,16 +43,13 @@ async function main() {
 
   const filter = { role: "dentist" };
   if (nameArg) filter.name = new RegExp(nameArg.replace(/\s+/g, "\\s*"), "i");
-  const dentist = await User.findOne(filter).select("name clinicName").lean();
+  const dentist = await User.findOne(filter).select("name").lean();
   if (!dentist) {
     console.log(`\nNo dentist${nameArg ? ` matching "${nameArg}"` : ""} found.\n`);
     return;
   }
 
   console.log(`\nDentist    : Dr. ${dentist.name}`);
-  console.log(
-    `clinicName : ${dentist.clinicName || `(not set — patients will see "Dr. ${dentist.name}")`}`
-  );
 
   // Prefer a real upcoming appointment so the date is genuine.
   const appt = await Appointment.findOne({
@@ -84,7 +81,7 @@ async function main() {
 
   const v = {
     patientName: patient.managed ? patient.guardianName || patient.name : patient.name,
-    clinicName: dentist.clinicName || `Dr. ${dentist.name}'s clinic`,
+    dentistName: `Dr. ${dentist.name}`,
     when,
   };
 
