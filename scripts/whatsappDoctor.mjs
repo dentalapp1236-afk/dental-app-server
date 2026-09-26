@@ -26,7 +26,7 @@ const yn = (b) => (b ? "yes" : "NO");
 async function main() {
   await connectDB();
 
-  console.log("\n1. CONFIGURATION");
+  console.log("\n1. CONFIGURATION (of THIS shell, not the Render service)");
   const enabled = process.env.WHATSAPP_ENABLED === "true";
   console.log(`   WHATSAPP_ENABLED=true : ${yn(enabled)}`);
   console.log(`   WAHA_URL set          : ${yn(!!process.env.WAHA_URL)}  ${process.env.WAHA_URL || ""}`);
@@ -34,7 +34,12 @@ async function main() {
   console.log(`   WAHA_SESSION          : ${process.env.WAHA_SESSION || "default (not set)"}`);
   console.log(`   WHATSAPP_TEST_TO      : ${process.env.WHATSAPP_TEST_TO || "(none — sends to real numbers)"}`);
   if (!enabled) {
-    console.log("\n   >> Nothing will ever send while WHATSAPP_ENABLED is not \"true\".");
+    console.log(
+      "\n   >> These are the variables in YOUR shell. Run locally they will read" +
+        "\n      NO even when Render has them set, because they live in the Render" +
+        "\n      dashboard and not in .env.production. Section 3 is what tells you" +
+        "\n      whether the deployed service is actually sending."
+    );
   }
 
   console.log("\n2. SESSION");

@@ -34,9 +34,16 @@ console.log(
 // enqueues of the same message would BOTH be accepted. The whole
 // no-double-sending guarantee rests on that index, so wait for it once
 // before the first enqueue rather than assume it is there.
-const indexesReady = WhatsAppMessage.init().catch((e) =>
-  console.error("[whatsapp] index build failed — dedupe is NOT guaranteed:", e?.message)
-);
+//
+// Resolved lazily rather than at import: this module is imported while
+// server.js is still wiring routes, before connectDB() has run, so building
+// indexes here would race the connection.
+let indexesReady = null;
+const ensureIndexes = () =>
+  (indexesReady ??= WhatsAppMessage.init().catch((e) => {
+    console.error("[whatsapp] index build failed — dedupe is NOT guaranteed:", e?.message);
+    indexesReady = null; // let the next send try again
+  }));
 
 // A record of a message we chose not to send at all. No dedupeKey: these are
 // evidence, not claims on the idempotency slot.
@@ -70,7 +77,7 @@ export async function sendWhatsApp({
 }) {
   try {
     if (!ENABLED) return { queued: false, reason: "disabled" };
-    await indexesReady;
+    await ensureIndexes();
 
     let body;
     try {
