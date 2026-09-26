@@ -33,6 +33,7 @@ import { startBalanceReminders } from "./jobs/balanceReminders.js";
 import { startInvoiceJob } from "./jobs/invoices.js";
 import { startBackupJob } from "./jobs/backup.js";
 import { startWhatsappQueue } from "./jobs/whatsappQueue.js";
+import { startWhatsappHealth } from "./jobs/whatsappHealth.js";
 import User from "./models/User.js";
 import Notification from "./models/Notification.js";
 import Appointment from "./models/Appointment.js";
@@ -162,6 +163,7 @@ connectDB()
     startInvoiceJob();
     startBackupJob();
     startWhatsappQueue();
+    startWhatsappHealth();
     // Reconcile indexes so the email unique index becomes sparse (lets multiple
     // patients exist without an email). Safe + idempotent on a small collection.
     User.syncIndexes().catch((e) => console.error("User.syncIndexes failed:", e.message));
