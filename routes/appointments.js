@@ -570,6 +570,10 @@ router.put("/:id", async (req, res) => {
 
     const dateChanged =
       date !== undefined && new Date(date).getTime() !== new Date(current.date).getTime();
+    // Staff cancelling through the status dropdown. Until now this told the
+    // patient nothing at all — not in-app, not email — so they would simply
+    // turn up to an appointment that no longer existed.
+    const justCancelled = status === "cancelled" && ACTIVE.includes(current.status);
 
     const set = { updatedBy: req.user._id };
     if (date !== undefined) set.date = date;
@@ -636,6 +640,37 @@ router.put("/:id", async (req, res) => {
         dedupeKey: `appointment_rescheduled:${appt._id}:${new Date(appt.date).toISOString()}`,
         appointment: appt._id,
         expiresAt: appt.date,
+      }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
+    }
+
+    // Tell the patient their appointment is off. Deliberately not tied to the
+    // dateChanged branch above: a cancellation usually carries no new date.
+    if (justCancelled) {
+      const c = appt.client;
+      const dName = await dentistNameFor(req.user);
+      const whose = c.managed ? `${c.name}'s` : "your";
+      const when = fmtWhen(appt.date);
+      const t = clientNotifyTarget(c);
+      await notifyUser(t.userId, {
+        type: "appointment_cancelled",
+        title: "Appointment cancelled",
+        body: `Dr. ${dName} cancelled ${whose} appointment on ${when}.`,
+        url: "/client",
+        email: t.email,
+      });
+
+      sendWhatsApp({
+        user: c,
+        template: "appointment_cancelled",
+        values: {
+          patientName: c.managed ? c.guardianName || c.name : c.name,
+          dentistName: `Dr. ${dName}`,
+          when,
+        },
+        dedupeKey: `appointment_cancelled:${appt._id}`,
+        appointment: appt._id,
+        // No expiresAt: a cancellation is worth sending late. Better to hear it
+        // after the slot has passed than to have turned up for nothing.
       }).catch((e) => console.error("[appointments] whatsapp:", e?.message));
     }
 

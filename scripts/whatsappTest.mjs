@@ -9,7 +9,7 @@
 //   node scripts/whatsappTest.mjs +923001234567 <template>     # any template
 //
 // Templates: appointment_confirmed, appointment_reminder,
-//            appointment_rescheduled, invoice_due
+//            appointment_rescheduled, appointment_cancelled, invoice_due
 //
 import "dotenv/config";
 import { sendText, sessionStatus, configured } from "../utils/whatsapp/waha.js";
@@ -54,6 +54,11 @@ const SAMPLES = {
     when: fmtWhen(tomorrow),
   },
   appointment_rescheduled: {
+    patientName: "there",
+    dentistName: "Dr. Ahmad Shamim (TEST)",
+    when: fmtWhen(tomorrow),
+  },
+  appointment_cancelled: {
     patientName: "there",
     dentistName: "Dr. Ahmad Shamim (TEST)",
     when: fmtWhen(tomorrow),

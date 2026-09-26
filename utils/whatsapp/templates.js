@@ -49,6 +49,16 @@ export const TEMPLATES = {
       FOOTER,
   },
 
+  appointment_cancelled: {
+    // Urgent for the obvious reason: a patient who doesn't hear this turns up
+    // to an appointment that no longer exists.
+    urgent: true,
+    params: ["patientName", "dentistName", "when"],
+    render: (v) =>
+      `Hello ${v.patientName}, your appointment with ${v.dentistName} on ${v.when} has been cancelled.` +
+      FOOTER,
+  },
+
   invoice_due: {
     params: ["dentistName", "amount", "month", "dueDate"],
     render: (v) =>
