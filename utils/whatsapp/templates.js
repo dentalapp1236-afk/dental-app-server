@@ -53,7 +53,7 @@ export const TEMPLATES = {
     params: ["dentistName", "amount", "month", "dueDate"],
     render: (v) =>
       `Hello ${v.dentistName}, your MyDentalBooking invoice for ${v.month} (${v.amount}) is due on ${v.dueDate}.` +
-      `\n\nYou can view it and the bank details in the app under Invoices.`,
+      `\n\nYou can view it and the bank details in the app in Invoices tab.`,
   },
 };
 
