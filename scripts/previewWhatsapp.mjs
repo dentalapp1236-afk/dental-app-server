@@ -4,11 +4,9 @@
 // safe to point at production. Use it to check the wording before go-live, and
 // afterwards whenever a template changes.
 //
-// Two fields are worth checking specifically, because they come from the
-// dentist's own profile and change what the patient reads:
-//   clinicName — falls back to "Dr. <name>" when the dentist never set one
-//   phone      — when unset, the footer drops the number and just says
-//                "contact your clinic", which is noticeably weaker
+// One field is worth checking specifically, because it comes from the
+// dentist's own profile and changes what the patient reads: clinicName, which
+// falls back to "Dr. <name>'s clinic" when the dentist never set one.
 //
 // Usage (from dental-app-server):
 //   node scripts/previewWhatsapp.mjs                 # first dentist found
@@ -45,7 +43,7 @@ async function main() {
 
   const filter = { role: "dentist" };
   if (nameArg) filter.name = new RegExp(nameArg.replace(/\s+/g, "\\s*"), "i");
-  const dentist = await User.findOne(filter).select("name clinicName phone").lean();
+  const dentist = await User.findOne(filter).select("name clinicName").lean();
   if (!dentist) {
     console.log(`\nNo dentist${nameArg ? ` matching "${nameArg}"` : ""} found.\n`);
     return;
@@ -54,9 +52,6 @@ async function main() {
   console.log(`\nDentist    : Dr. ${dentist.name}`);
   console.log(
     `clinicName : ${dentist.clinicName || `(not set — patients will see "Dr. ${dentist.name}")`}`
-  );
-  console.log(
-    `clinic tel : ${dentist.phone || "(not set — the footer will drop the number)"}`
   );
 
   // Prefer a real upcoming appointment so the date is genuine.
@@ -91,7 +86,6 @@ async function main() {
     patientName: patient.managed ? patient.guardianName || patient.name : patient.name,
     clinicName: dentist.clinicName || `Dr. ${dentist.name}'s clinic`,
     when,
-    clinicPhone: dentist.phone,
   };
 
   const show = (title, template, values) => {

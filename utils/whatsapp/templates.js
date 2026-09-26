@@ -13,14 +13,11 @@
 //   1. Name the clinic in the first line. The message arrives from
 //      "MyDentalBooking", not from the patient's own dentist, so without this
 //      the patient has no idea who is contacting them.
-//   2. End by pointing at the clinic's own phone. This number does not take
-//      replies, and a shared inbox that silently swallows them is worse than
-//      no WhatsApp at all.
+//   2. Say plainly that replies go nowhere. Patients will otherwise answer
+//      these, and nobody is reading that inbox.
 
-const REPLY_FOOTER = (clinicPhone) =>
-  clinicPhone
-    ? `\n\nTo change or cancel, please call the clinic on ${clinicPhone}. This number doesn't take replies.`
-    : `\n\nTo change or cancel, please contact your clinic. This number doesn't take replies.`;
+const FOOTER =
+  "\n\nThis number doesn't take replies.\nwww.mydentalbooking.com - Bookings made easy";
 
 // `urgent` marks the messages a person is waiting on. Sends are spaced 30-60
 // seconds apart to avoid a block, so a batch of reminders can occupy the queue
@@ -30,25 +27,25 @@ const REPLY_FOOTER = (clinicPhone) =>
 export const TEMPLATES = {
   appointment_confirmed: {
     urgent: true,
-    params: ["patientName", "clinicName", "when", "clinicPhone"],
+    params: ["patientName", "clinicName", "when"],
     render: (v) =>
       `Hello ${v.patientName}, your appointment at ${v.clinicName} is confirmed for ${v.when}.` +
-      REPLY_FOOTER(v.clinicPhone),
+      FOOTER,
   },
 
   appointment_reminder: {
-    params: ["patientName", "clinicName", "when", "clinicPhone"],
+    params: ["patientName", "clinicName", "when"],
     render: (v) =>
       `Hello ${v.patientName}, a reminder that your appointment at ${v.clinicName} is tomorrow, ${v.when}.` +
-      REPLY_FOOTER(v.clinicPhone),
+      FOOTER,
   },
 
   appointment_rescheduled: {
     urgent: true,
-    params: ["patientName", "clinicName", "when", "clinicPhone"],
+    params: ["patientName", "clinicName", "when"],
     render: (v) =>
       `Hello ${v.patientName}, your appointment at ${v.clinicName} has been moved to ${v.when}.` +
-      REPLY_FOOTER(v.clinicPhone),
+      FOOTER,
   },
 
   invoice_due: {
@@ -64,9 +61,8 @@ export const TEMPLATES = {
 export function renderTemplate(name, values = {}) {
   const tpl = TEMPLATES[name];
   if (!tpl) throw new Error(`Unknown WhatsApp template: ${name}`);
-  // clinicPhone is genuinely optional — the footer has wording for both cases.
   const missing = tpl.params.filter(
-    (p) => p !== "clinicPhone" && (values[p] === undefined || values[p] === null || values[p] === "")
+    (p) => values[p] === undefined || values[p] === null || values[p] === ""
   );
   if (missing.length) {
     throw new Error(`WhatsApp template "${name}" is missing: ${missing.join(", ")}`);

@@ -47,19 +47,16 @@ const SAMPLES = {
     patientName: "there",
     clinicName: "Bright Smile Dental (TEST)",
     when: fmtWhen(tomorrow),
-    clinicPhone: "0319 0041011",
   },
   appointment_reminder: {
     patientName: "there",
     clinicName: "Bright Smile Dental (TEST)",
     when: fmtWhen(tomorrow),
-    clinicPhone: "0319 0041011",
   },
   appointment_rescheduled: {
     patientName: "there",
     clinicName: "Bright Smile Dental (TEST)",
     when: fmtWhen(tomorrow),
-    clinicPhone: "0319 0041011",
   },
   invoice_due: {
     dentistName: "Dr Ahmad Shamim",
