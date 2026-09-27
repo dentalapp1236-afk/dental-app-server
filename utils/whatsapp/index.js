@@ -24,8 +24,12 @@ const ENABLED = process.env.WHATSAPP_ENABLED === "true";
 
 export const whatsappConfigured = ENABLED && driver.configured;
 
+// The session name is in here because it is the single most common thing to
+// get wrong: re-pairing WhatsApp mints a NEW session name, and a stale one
+// makes every send 404 while "configured=true" still looks healthy.
 console.log(
   `[whatsapp] enabled=${ENABLED} driver=${driver.driverName} configured=${driver.configured}` +
+    ` session=${process.env.WAHA_SESSION || "default (WAHA_SESSION not set)"}` +
     (process.env.WHATSAPP_TEST_TO ? ` TEST MODE -> ${process.env.WHATSAPP_TEST_TO}` : "")
 );
 
