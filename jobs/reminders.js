@@ -109,19 +109,37 @@ async function sendWindow({ flag, ms, lead }) {
 //
 // One bulk query finds what has already been queued, rather than attempting N
 // inserts and letting the unique index reject them.
-const WHATSAPP_LEAD_MS = 24 * 60 * 60 * 1000;
+const H = 60 * 60 * 1000;
+
+// Two WhatsApp reminders, defined as NON-OVERLAPPING ranges rather than two
+// "within N hours" windows. Overlapping windows would fire both messages back
+// to back for an appointment booked three hours out — and the 24-hour one
+// would cheerfully say "tomorrow" about something happening this afternoon.
+//
+// Push and email keep their own three windows (24h, 12h, 1h) above; these are
+// WhatsApp only.
+const WHATSAPP_WINDOWS = [
+  { template: "appointment_reminder", from: 12 * H, to: 24 * H },
+  { template: "appointment_reminder_12h", from: 0, to: 12 * H },
+];
 
 async function sendWhatsappReminders() {
-  const now = new Date();
+  let total = 0;
+  for (const w of WHATSAPP_WINDOWS) total += await sendWhatsappWindow(w);
+  return total;
+}
+
+async function sendWhatsappWindow({ template, from, to }) {
+  const now = Date.now();
   const due = await Appointment.find({
     status: "scheduled",
-    date: { $gt: now, $lte: new Date(now.getTime() + WHATSAPP_LEAD_MS) },
+    date: { $gt: new Date(now + from), $lte: new Date(now + to) },
   })
     .populate("client", "name managed guardianName phoneE164")
     .populate("dentist", "name");
   if (!due.length) return 0;
 
-  const keys = due.map((a) => `appointment_reminder:${a._id}`);
+  const keys = due.map((a) => `${template}:${a._id}`);
   const already = new Set(
     (await WhatsAppMessage.find({ dedupeKey: { $in: keys } }).select("dedupeKey").lean()).map(
       (m) => m.dedupeKey
@@ -130,13 +148,13 @@ async function sendWhatsappReminders() {
 
   let queued = 0;
   for (const appt of due) {
-    const key = `appointment_reminder:${appt._id}`;
+    const key = `${template}:${appt._id}`;
     if (already.has(key)) continue;
     const c = appt.client;
     if (!c?.phoneE164) continue; // logged as a skip by sendWhatsApp on a later run
     const r = await sendWhatsApp({
       user: c,
-      template: "appointment_reminder",
+      template,
       values: {
         patientName: c.managed ? c.guardianName || c.name : c.name,
         dentistName: appt.dentist?.name ? `Dr. ${appt.dentist.name}` : "your dentist",
@@ -149,7 +167,7 @@ async function sendWhatsappReminders() {
     });
     if (r.queued) queued += 1;
   }
-  if (queued) console.log(`[reminder] queued ${queued} WhatsApp reminder(s)`);
+  if (queued) console.log(`[reminder] queued ${queued} x ${template}`);
   return queued;
 }
 

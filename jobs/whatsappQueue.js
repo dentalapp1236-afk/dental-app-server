@@ -21,6 +21,37 @@ const STUCK_MS = Number(process.env.WHATSAPP_STUCK_MS || 5 * 60 * 1000);
 // set this, or a test run messages real patients.
 const TEST_TO = (process.env.WHATSAPP_TEST_TO || "").trim();
 
+// Quiet hours, in clinic local time. Twelve hours before a 4pm appointment is
+// 4am — fine for a silent email, but a WhatsApp buzzes the patient's phone in
+// the middle of the night, and a patient woken at 4am is a patient who blocks
+// the number.
+//
+// URGENT messages are exempt, deliberately. A cancellation of tomorrow's 9am
+// sent at 10pm has to go at 10pm; holding it until morning defeats the entire
+// point of telling them. Only the batch traffic waits.
+//
+// Set both to the same value to disable.
+const CLINIC_TZ = process.env.CLINIC_TZ || "Asia/Karachi";
+const QUIET_START = Number(process.env.WHATSAPP_QUIET_START ?? 21); // 9pm
+const QUIET_END = Number(process.env.WHATSAPP_QUIET_END ?? 8); // 8am
+
+function clinicHour() {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: CLINIC_TZ,
+    }).format(new Date())
+  );
+}
+
+function inQuietHours() {
+  if (QUIET_START === QUIET_END) return false;
+  const h = clinicHour();
+  // The window normally wraps midnight (21 -> 8); handle both shapes.
+  return QUIET_START > QUIET_END ? h >= QUIET_START || h < QUIET_END : h >= QUIET_START && h < QUIET_END;
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Put rows abandoned by a dead process back in the queue. Without this a
@@ -38,9 +69,13 @@ async function reclaimStuck() {
 
 // Take the next message atomically. Urgent first, then oldest — and the
 // status flip to "sending" is what stops two ticks claiming the same row.
+//
+// During quiet hours the filter narrows to urgent only, so non-urgent rows are
+// never claimed rather than being claimed and put back. They simply wait.
 function claimNext() {
+  const filter = inQuietHours() ? { status: "queued", urgent: true } : { status: "queued" };
   return WhatsAppMessage.findOneAndUpdate(
-    { status: "queued" },
+    filter,
     { $set: { status: "sending", claimedAt: new Date() }, $inc: { attempts: 1 } },
     { sort: { urgent: -1, createdAt: 1 }, new: true }
   );
@@ -157,7 +192,10 @@ export function startWhatsappQueue() {
   }
   console.log(
     `[whatsapp] queue worker started — gap ${MIN_GAP_MS / 1000}-${(MIN_GAP_MS + JITTER_MS) / 1000}s, ` +
-      `cap ${DAILY_CAP}/24h, up to ${MAX_ATTEMPTS} attempts`
+      `cap ${DAILY_CAP}/24h, up to ${MAX_ATTEMPTS} attempts` +
+      (QUIET_START === QUIET_END
+        ? ", quiet hours off"
+        : `, quiet ${QUIET_START}:00-${QUIET_END}:00 ${CLINIC_TZ} (urgent exempt)`)
   );
   loop();
 }

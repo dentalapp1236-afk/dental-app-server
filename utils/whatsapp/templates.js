@@ -43,6 +43,16 @@ export const TEMPLATES = {
       FOOTER,
   },
 
+  // The second reminder, closer in. Deliberately avoids "today" and
+  // "tomorrow": this one can be held overnight by quiet hours, so a relative
+  // word chosen at enqueue time could be wrong by the time it is read.
+  appointment_reminder_12h: {
+    params: ["patientName", "dentistName", "when"],
+    render: (v) =>
+      `Hello ${v.patientName}, your appointment with ${v.dentistName} is coming up — ${v.when}.` +
+      FOOTER,
+  },
+
   appointment_rescheduled: {
     urgent: true,
     params: ["patientName", "dentistName", "when"],

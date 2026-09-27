@@ -4,13 +4,12 @@
 // Worth being clear about which channel is which, because the three windows do
 // NOT behave the same:
 //
-//   24h  in-app + push + email + WHATSAPP
-//   12h  in-app + push + email        (no WhatsApp)
-//    1h  in-app + push + email        (no WhatsApp)
+//   12-24h out  in-app + push + email + WHATSAPP ("tomorrow")
+//    0-12h out  in-app + push + email + WHATSAPP ("coming up")
+//        1h out  in-app + push + email        (no WhatsApp)
 //
-// WhatsApp is on the 24-hour window alone, deliberately: three messages per
-// appointment from one shared number reads as spam and burns the daily cap
-// three times over.
+// The two WhatsApp windows are non-overlapping, so each appointment gets at
+// most one of each and never both at once.
 //
 // Usage (from dental-app-server):
 //   node scripts/upcomingReminders.mjs          # next 24 hours
@@ -56,9 +55,11 @@ async function main() {
   }
 
   // One query for every WhatsApp reminder already accounted for.
-  const rows = await WhatsAppMessage.find({
-    dedupeKey: { $in: due.map((a) => `appointment_reminder:${a._id}`) },
-  })
+  const keyFor = (a) => {
+    const hrs = (new Date(a.date) - now) / 3600000;
+    return hrs > 12 ? `appointment_reminder:${a._id}` : `appointment_reminder_12h:${a._id}`;
+  };
+  const rows = await WhatsAppMessage.find({ dedupeKey: { $in: due.map(keyFor) } })
     .select("dedupeKey status skipReason")
     .lean();
   const seen = new Map(rows.map((r) => [r.dedupeKey, r]));
@@ -76,7 +77,7 @@ async function main() {
     const inCol = hrs < 1 ? "<1h" : `${hrs.toFixed(1)}h`;
     const who = c ? (c.managed ? `${c.name} (via guardian)` : c.name) : "(no client)";
 
-    const row = seen.get(`appointment_reminder:${a._id}`);
+    const row = seen.get(keyFor(a));
     let wa;
     if (row) {
       wa = row.status === "skipped" ? `skipped: ${row.skipReason}` : row.status;
@@ -100,7 +101,7 @@ async function main() {
   const numbers = due
     .filter((a) => {
       const hrs = (new Date(a.date) - now) / 3600000;
-      return a.client?.phoneE164 && hrs <= 24 && !seen.has(`appointment_reminder:${a._id}`);
+      return a.client?.phoneE164 && hrs <= 24 && !seen.has(keyFor(a));
     })
     .map((a) => a.client.phoneE164);
   if (numbers.length) {
