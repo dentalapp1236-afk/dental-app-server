@@ -60,10 +60,10 @@ async function main() {
   const seen = new Map(rows.map((r) => [r.dedupeKey, r]));
 
   console.log(
-    "  when".padEnd(18) + "in".padEnd(8) + "patient".padEnd(24) +
-    "dentist".padEnd(20) + "whatsapp"
+    "  when".padEnd(18) + "in".padEnd(8) + "patient".padEnd(22) +
+    "number".padEnd(16) + "dentist".padEnd(18) + "whatsapp"
   );
-  console.log("  " + "-".repeat(86));
+  console.log("  " + "-".repeat(100));
 
   let willSend = 0;
   for (const a of due) {
@@ -87,9 +87,21 @@ async function main() {
 
     console.log(
       "  " + fmt(a.date).padEnd(16) + inCol.padEnd(8) +
-      who.slice(0, 23).padEnd(24) +
-      `Dr. ${a.dentist?.name || "?"}`.slice(0, 19).padEnd(20) + wa
+      who.slice(0, 21).padEnd(22) +
+      (c?.phoneE164 || "—").padEnd(16) +
+      `Dr. ${a.dentist?.name || "?"}`.slice(0, 17).padEnd(18) + wa
     );
+  }
+
+  const numbers = due
+    .filter((a) => {
+      const hrs = (new Date(a.date) - now) / 3600000;
+      return a.client?.phoneE164 && hrs <= 24 && !seen.has(`appointment_reminder:${a._id}`);
+    })
+    .map((a) => a.client.phoneE164);
+  if (numbers.length) {
+    console.log("\n  numbers due a WhatsApp reminder:");
+    for (const n of numbers) console.log(`    ${n}`);
   }
 
   console.log(`\n  ${due.length} appointment(s); ${willSend} WhatsApp reminder(s) still to queue.`);
