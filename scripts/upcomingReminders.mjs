@@ -20,6 +20,10 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import { connectDB } from "../config/db.js";
 import Appointment from "../models/Appointment.js";
+// Imported for its side effect: populate("client"/"dentist") resolves the User
+// model by name, so the schema has to be registered even though this file
+// never references User directly.
+import "../models/User.js";
 import WhatsAppMessage from "../models/WhatsAppMessage.js";
 
 const HOURS = Number(process.argv[2] || 24);
