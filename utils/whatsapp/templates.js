@@ -18,7 +18,9 @@
 //      these, and nobody is reading that inbox.
 
 const FOOTER =
-  "\n\nThis number doesn't take replies.\nwww.mydentalbooking.com - Bookings made easy";
+  "\n\nThis number doesn't take replies." +
+  "\nwww.mydentalbooking.com - Bookings made easy" +
+  "\nSoon moving to www.mymedin.com";
 
 // `urgent` marks the messages a person is waiting on. Sends are spaced 30-60
 // seconds apart to avoid a block, so a batch of reminders can occupy the queue
