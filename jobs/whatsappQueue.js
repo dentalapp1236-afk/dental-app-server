@@ -5,9 +5,15 @@ import { toChatId } from "../utils/phone.js";
 // Drains the WhatsApp queue: one message at a time, slowly, forever.
 //
 // Everything about the pace here is about not getting the number banned.
-// 30-60 seconds between sends is WAHA's own guidance — a floor, not a tuning
-// knob — and it is randomised because a perfectly regular interval is itself a
-// bot signature, arguably more incriminating than speed.
+// The 30-60s default is WAHA's own guidance, and it is overridable because
+// throughput is a real constraint: two reminders per appointment at ~45s each
+// means 50 messages take about 37 minutes to drain. The trade is paid in risk
+// to the number rather than in latency — halve the gap and you roughly halve
+// the drain time, and roughly double how quickly a young number looks
+// scripted.
+//
+// Whatever gap you choose, keep the JITTER. A perfectly regular interval is a
+// stronger bot signature than a short one.
 
 const MIN_GAP_MS = Number(process.env.WHATSAPP_MIN_GAP_MS || 30000);
 const JITTER_MS = Number(process.env.WHATSAPP_JITTER_MS || 30000);
