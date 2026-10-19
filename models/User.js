@@ -94,6 +94,17 @@ const userSchema = new mongoose.Schema(
         end: { type: String },
       },
     ],
+    // Leave periods (inclusive date ranges, clinic-local YYYY-MM-DD). Patients
+    // can't book or reschedule into any day of a leave; the booking screen tells
+    // them the doctor is on leave until the last day.
+    //   { from: "2026-11-02", to: "2026-11-16" }
+    leaves: [
+      {
+        _id: false,
+        from: { type: String },
+        to: { type: String },
+      },
+    ],
     // Denormalized rating, recomputed from Reviews
     rating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },

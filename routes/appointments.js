@@ -77,14 +77,29 @@ const clinicPartsOf = (date) => {
     minutes: s.getUTCHours() * 60 + s.getUTCMinutes(),
   };
 };
+// "The doctor is on leave until 16 November 2026." — `to` is the last day off.
+const leaveMessage = (leave) => {
+  const last = new Date(`${leave.to}T00:00:00Z`).toLocaleDateString("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  return `The doctor is on leave until ${last}.`;
+};
+
 // Returns an error message if `date` is not a bookable slot for this dentist
 // (clinic closed that day, outside opening hours, or off the slot grid); else null.
 const invalidSlotReason = async (dentistId, date) => {
   const owner = await User.findById(dentistId)
-    .select("availability slotDuration dayOverrides")
+    .select("availability slotDuration dayOverrides leaves")
     .lean();
   if (!owner) return null; // nothing to validate against
   const { dayStr, dow, minutes } = clinicPartsOf(date);
+
+  // A leave blocks the whole day, whatever the hours say.
+  const leave = (owner.leaves || []).find((l) => l.from <= dayStr && dayStr <= l.to);
+  if (leave) return leaveMessage(leave);
   const step = owner.slotDuration || 15;
   const availability = owner.availability || [];
   const overrides = owner.dayOverrides || [];
@@ -246,13 +261,14 @@ router.get("/booked", async (req, res) => {
 
     const [appts, dentist] = await Promise.all([
       Appointment.find(q).select("date").lean(),
-      User.findById(dentistId).select("availability slotDuration dayOverrides").lean(),
+      User.findById(dentistId).select("availability slotDuration dayOverrides leaves").lean(),
     ]);
     res.json({
       slots: appts.map((a) => a.date),
       availability: dentist?.availability || [],
       slotDuration: dentist?.slotDuration || 15,
       dayOverrides: dentist?.dayOverrides || [],
+      leaves: dentist?.leaves || [],
     });
   } catch (err) {
     console.error(err);

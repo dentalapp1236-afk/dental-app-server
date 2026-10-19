@@ -406,7 +406,7 @@ router.put("/me", protect, async (req, res) => {
 router.get("/clinic-settings", protect, requireStaff, async (req, res) => {
   try {
     const owner = await User.findById(clinicId(req.user))
-      .select("clinicName availability slotDuration dayOverrides location")
+      .select("clinicName availability slotDuration dayOverrides leaves location")
       .lean();
     if (!owner) return res.status(404).json({ message: "Clinic not found" });
     res.json({
@@ -414,6 +414,7 @@ router.get("/clinic-settings", protect, requireStaff, async (req, res) => {
       availability: owner.availability || [],
       slotDuration: owner.slotDuration || 15,
       dayOverrides: owner.dayOverrides || [],
+      leaves: owner.leaves || [],
       location: owner.location || null,
     });
   } catch (err) {
@@ -454,6 +455,14 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
           end: o.closed ? undefined : o.end || undefined,
         }));
     }
+    if (Array.isArray(b.leaves)) {
+      // Well-formed ranges only (from <= to); drop leaves that have fully ended.
+      const ymd = /^\d{4}-\d{2}-\d{2}$/;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      owner.leaves = b.leaves
+        .filter((l) => l && ymd.test(l.from || "") && ymd.test(l.to || "") && l.from <= l.to && l.to >= todayStr)
+        .map((l) => ({ from: l.from, to: l.to }));
+    }
     if (
       b.latitude != null &&
       b.longitude != null &&
@@ -472,6 +481,7 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
       availability: owner.availability || [],
       slotDuration: owner.slotDuration || 15,
       dayOverrides: owner.dayOverrides || [],
+      leaves: owner.leaves || [],
       location: owner.location || null,
     });
   } catch (err) {
