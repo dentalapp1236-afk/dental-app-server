@@ -77,6 +77,23 @@ const userSchema = new mongoose.Schema(
         end: { type: String },
       },
     ],
+    // Scheduled future weekly hours. The latest entry with effectiveDate <= a
+    // booking date supplies the hours for that date. This lets the clinic keep
+    // today's/current hours while customers can already book under new hours.
+    scheduledAvailability: [
+      {
+        _id: false,
+        effectiveDate: { type: String }, // YYYY-MM-DD
+        availability: [
+          {
+            _id: false,
+            day: { type: String },
+            start: { type: String },
+            end: { type: String },
+          },
+        ],
+      },
+    ],
     // Length of a single appointment slot in minutes (dentist-configurable).
     // Controls how clinic hours are divided into bookable time slots.
     slotDuration: { type: Number, default: 15, min: 5, max: 120 },

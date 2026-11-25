@@ -406,12 +406,13 @@ router.put("/me", protect, async (req, res) => {
 router.get("/clinic-settings", protect, requireStaff, async (req, res) => {
   try {
     const owner = await User.findById(clinicId(req.user))
-      .select("clinicName availability slotDuration dayOverrides leaves location")
+      .select("clinicName availability scheduledAvailability slotDuration dayOverrides leaves location")
       .lean();
     if (!owner) return res.status(404).json({ message: "Clinic not found" });
     res.json({
       clinicName: owner.clinicName || "",
       availability: owner.availability || [],
+      scheduledAvailability: owner.scheduledAvailability || [],
       slotDuration: owner.slotDuration || 15,
       dayOverrides: owner.dayOverrides || [],
       leaves: owner.leaves || [],
@@ -475,10 +476,25 @@ router.put("/clinic-settings", protect, requireStaff, async (req, res) => {
       };
     }
 
+    if (Array.isArray(b.scheduledAvailability)) {
+      const hhmm = /^\d{2}:\d{2}$/;
+      owner.scheduledAvailability = b.scheduledAvailability
+        .filter((entry) => entry && /^\d{4}-\d{2}-\d{2}$/.test(entry.effectiveDate))
+        .map((entry) => ({
+          effectiveDate: entry.effectiveDate,
+          availability: (entry.availability || [])
+            .filter((a) => a && a.day && hhmm.test(a.start || "") && hhmm.test(a.end || "") && a.start < a.end)
+            .map((a) => ({ day: a.day, start: a.start, end: a.end })),
+        }))
+        .filter((entry) => entry.availability.length > 0)
+        .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+    }
+
     await owner.save();
     res.json({
       clinicName: owner.clinicName || "",
       availability: owner.availability || [],
+      scheduledAvailability: owner.scheduledAvailability || [],
       slotDuration: owner.slotDuration || 15,
       dayOverrides: owner.dayOverrides || [],
       leaves: owner.leaves || [],
@@ -527,6 +543,50 @@ router.post("/agreement/accept", protect, async (req, res) => {
     u.agreement = { acceptedAt: new Date(), name, version: version || "v1" };
     await u.save();
     res.json({ user: u });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/auth/test-schedule
+router.get("/test-schedule", protect, async (req, res) => {
+  try {
+    const owner = await User.findById(clinicId(req.user))
+      .select("scheduledAvailability")
+      .lean();
+    if (!owner) return res.status(404).json({ message: "Clinic not found" });
+    res.json({ scheduledAvailability: owner.scheduledAvailability || [] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PUT /api/auth/test-schedule
+router.put("/test-schedule", protect, requireStaff, async (req, res) => {
+  try {
+    const owner = await User.findById(clinicId(req.user));
+    if (!owner) return res.status(404).json({ message: "Clinic not found" });
+    const b = req.body;
+
+    if (Array.isArray(b.scheduledAvailability)) {
+      const hhmm = /^\d{2}:\d{2}$/;
+      owner.scheduledAvailability = b.scheduledAvailability
+        .filter((entry) => entry && /^\d{4}-\d{2}-\d{2}$/.test(entry.effectiveDate))
+        .filter((entry) => entry.effectiveDate >= new Date().toISOString().slice(0, 10))
+        .map((entry) => ({
+          effectiveDate: entry.effectiveDate,
+          availability: (entry.availability || [])
+            .filter((a) => a && a.day && hhmm.test(a.start || "") && hhmm.test(a.end || "") && a.start < a.end)
+            .map((a) => ({ day: a.day, start: a.start, end: a.end })),
+        }))
+        .filter((entry) => entry.availability.length > 0)
+        .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+    }
+
+    await owner.save();
+    res.json({ scheduledAvailability: owner.scheduledAvailability || [] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

@@ -101,10 +101,12 @@ router.get("/:id/booked", async (req, res) => {
     }
     const [appts, dentist] = await Promise.all([
       Appointment.find(q).select("date").lean(),
-      User.findById(req.params.id).select("slotDuration dayOverrides leaves").lean(),
+      User.findById(req.params.id).select("availability scheduledAvailability slotDuration dayOverrides leaves").lean(),
     ]);
     res.json({
       slots: appts.map((a) => a.date),
+      availability: dentist?.availability || [],
+      scheduledAvailability: dentist?.scheduledAvailability || [],
       slotDuration: dentist?.slotDuration || 15,
       dayOverrides: dentist?.dayOverrides || [],
       leaves: dentist?.leaves || [],

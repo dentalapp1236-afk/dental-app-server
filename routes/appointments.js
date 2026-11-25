@@ -8,6 +8,7 @@ import { sendMail } from "../utils/mailer.js";
 import { protect, clinicId } from "../middleware/auth.js";
 import { notifyClinic } from "../utils/notify.js";
 import { sendWhatsApp } from "../utils/whatsapp/index.js";
+import { clinicAvailabilityForDate } from "../utils/availabilitySchedule.js";
 
 const router = express.Router();
 router.use(protect);
@@ -46,7 +47,9 @@ const ACTIVE = ["scheduled", "pending"];
 // 20-min grid). Appointments exactly one slot-length apart (adjacent slots) are
 // still allowed. The exact-time unique index remains as the race-proof backstop.
 const slotConflict = async (dentistId, date, exceptId) => {
-  const owner = await User.findById(dentistId).select("slotDuration").lean();
+  const owner = await User.findById(dentistId)
+    .select("availability scheduledAvailability slotDuration dayOverrides leaves")
+    .lean();
   const gapMs = (owner?.slotDuration || 15) * 60000;
   const t = new Date(date).getTime();
   const query = {
@@ -101,7 +104,7 @@ const invalidSlotReason = async (dentistId, date) => {
   const leave = (owner.leaves || []).find((l) => l.from <= dayStr && dayStr <= l.to);
   if (leave) return leaveMessage(leave);
   const step = owner.slotDuration || 15;
-  const availability = owner.availability || [];
+  const availability = clinicAvailabilityForDate(owner, dayStr);
   const overrides = owner.dayOverrides || [];
 
   // Effective hours for this clinic day — a per-date override wins over the
@@ -261,11 +264,12 @@ router.get("/booked", async (req, res) => {
 
     const [appts, dentist] = await Promise.all([
       Appointment.find(q).select("date").lean(),
-      User.findById(dentistId).select("availability slotDuration dayOverrides leaves").lean(),
+      User.findById(dentistId).select("availability scheduledAvailability slotDuration dayOverrides leaves").lean(),
     ]);
     res.json({
       slots: appts.map((a) => a.date),
       availability: dentist?.availability || [],
+      scheduledAvailability: dentist?.scheduledAvailability || [],
       slotDuration: dentist?.slotDuration || 15,
       dayOverrides: dentist?.dayOverrides || [],
       leaves: dentist?.leaves || [],
